@@ -1,0 +1,2601 @@
+javascript// ============================================================================
+// package.json
+// ============================================================================
+{
+  "name": "neon-tap",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "expo": "~54.0.0",
+    "expo-audio": "~15.0.0",
+    "expo-haptics": "~14.0.0",
+    "expo-splash-screen": "~0.29.0",
+    "expo-status-bar": "~2.0.0",
+    "react": "18.3.1",
+    "react-native": "0.76.5",
+    "react-native-safe-area-context": "4.12.0",
+    "react-native-screens": "~4.4.0",
+    "react-native-gesture-handler": "~2.20.2",
+    "react-native-reanimated": "~3.16.1",
+    "@react-navigation/native": "^7.0.10",
+    "@react-navigation/native-stack": "^7.1.8",
+    "@react-native-async-storage/async-storage": "^2.1.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0"
+  },
+  "private": true
+}
+javascript// ============================================================================
+// app.json
+// ============================================================================
+{
+  "expo": {
+    "name": "Neon Tap",
+    "slug": "neon-tap",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1a1a2e"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.neontap.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1a1a2e"
+      },
+      "package": "com.neontap.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "jsEngine": "hermes",
+    "plugins": [
+      "expo-audio"
+    ]
+  }
+}
+javascript// ============================================================================
+// babel.config.js
+// ============================================================================
+module.exports = function(api) {
+  api.cache(true);
+  return {
+    presets: ['babel-preset-expo'],
+    plugins: [
+      'react-native-reanimated/plugin',
+    ],
+  };
+};
+javascript// ============================================================================
+// index.js
+// ============================================================================
+import { registerRootComponent } from 'expo';
+import App from './App';
+
+// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
+// It also ensures that whether you load the app in Expo Go or in a native build,
+// the environment is set up appropriately
+registerRootComponent(App);
+javascript// ============================================================================
+// App.js
+// ============================================================================
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import * as SplashScreen from 'expo-splash-screen';
+import { StatusBar } from 'expo-status-bar';
+
+// Services
+import { storageService } from './src/services/StorageService';
+import { soundManager } from './src/services/SoundManager';
+import { adService } from './src/services/AdService';
+
+// Screens
+import MenuScreen from './src/screens/MenuScreen';
+import GameScreen from './src/screens/GameScreen';
+import ShopScreen from './src/screens/ShopScreen';
+import AchievementsScreen from './src/screens/AchievementsScreen';
+import InstructionsScreen from './src/screens/InstructionsScreen';
+
+// Keep splash screen visible while we fetch resources
+SplashScreen.preventAutoHideAsync();
+
+export default function App() {
+  const [Stack, setStack] = useState(null);
+  const [isReady, setIsReady] = useState(false);
+  const [playerData, setPlayerData] = useState({
+    xp: 0,
+    coins: 0,
+    highScore: 0,
+    maxCombo: 0,
+    gamesPlayed: 0,
+  });
+
+  useEffect(() => {
+    async function prepare() {
+      try {
+        // Initialize services
+        await storageService.initialize();
+        await soundManager.initialize();
+        await adService.initialize();
+
+        // Load player data
+        const savedData = await storageService.getItem('playerData');
+        if (savedData) {
+          setPlayerData(savedData);
+        }
+
+        // Create navigation stack (safe - in useEffect)
+        const stackNavigator = createNativeStackNavigator();
+        setStack(() => stackNavigator);
+      } catch (e) {
+        console.warn('App initialization error:', e);
+      } finally {
+        setIsReady(true);
+        await SplashScreen.hideAsync();
+      }
+    }
+
+    prepare();
+  }, []);
+
+  const updatePlayerData = useCallback((newData) => {
+    setPlayerData(newData);
+  }, []);
+
+  if (!isReady || !Stack) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#4ECDC4" />
+        <Text style={styles.loadingText}>Loading Neon Tap...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <StatusBar style="light" />
+      <NavigationContainer>
+        <Stack.Navigator
+          screenOptions={{
+            headerShown: false,
+            animation: 'slide_from_right',
+            contentStyle: { backgroundColor: '#1a1a2e' },
+          }}
+        >
+          <Stack.Screen name="Menu">
+            {(props) => (
+              <MenuScreen {...props} playerData={playerData} onUpdateData={updatePlayerData} />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Game">
+            {(props) => (
+              <GameScreen {...props} playerData={playerData} onUpdateData={updatePlayerData} />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Shop">
+            {(props) => (
+              <ShopScreen {...props} playerData={playerData} onUpdateData={updatePlayerData} />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="Achievements">
+            {(props) => <AchievementsScreen {...props} playerData={playerData} />}
+          </Stack.Screen>
+          <Stack.Screen name="Instructions" component={InstructionsScreen} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#4ECDC4',
+    fontSize: 18,
+    marginTop: 20,
+    fontWeight: '600',
+  },
+});
+javascript// ============================================================================
+// src/services/StorageService.js
+// ============================================================================
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+class StorageService {
+  constructor() {
+    this.isInitialized = false;
+  }
+
+  async initialize() {
+    if (this.isInitialized) return;
+    try {
+      // Test storage access
+      await AsyncStorage.getItem('test');
+      this.isInitialized = true;
+      console.log('✅ Storage initialized');
+    } catch (error) {
+      console.warn('Storage initialization failed:', error);
+    }
+  }
+
+  async getItem(key) {
+    if (!this.isInitialized) return null;
+    try {
+      const value = await AsyncStorage.getItem(key);
+      return value ? JSON.parse(value) : null;
+    } catch (error) {
+      console.warn('Storage get failed:', error);
+      return null;
+    }
+  }
+
+  async setItem(key, value) {
+    if (!this.isInitialized) return;
+    try {
+      await AsyncStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+      console.warn('Storage set failed:', error);
+    }
+  }
+
+  async removeItem(key) {
+    if (!this.isInitialized) return;
+    try {
+      await AsyncStorage.removeItem(key);
+    } catch (error) {
+      console.warn('Storage remove failed:', error);
+    }
+  }
+}
+
+export const storageService = new StorageService();
+javascript// ============================================================================
+// src/services/SoundManager.js
+// ============================================================================
+import { Audio } from 'expo-audio';
+
+class SoundManager {
+  constructor() {
+    this.isInitialized = false;
+    this.isMuted = false;
+    this.sounds = {};
+  }
+
+  async initialize() {
+    if (this.isInitialized) return;
+    try {
+      await Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+      });
+      this.isInitialized = true;
+      console.log('✅ Audio initialized');
+    } catch (error) {
+      console.warn('Audio initialization failed:', error);
+    }
+  }
+
+  async playSound(type, comboMultiplier = 1) {
+    if (!this.isInitialized || this.isMuted) return;
+
+    try {
+      // Create a simple beep sound programmatically
+      // In production, you would load actual sound files
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: this.generateToneUri(type, comboMultiplier) },
+        { shouldPlay: true, volume: 0.3 }
+      );
+      
+      // Auto-unload after playing
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.didJustFinish) {
+          sound.unloadAsync();
+        }
+      });
+    } catch (error) {
+      console.warn('Sound playback failed:', error);
+    }
+  }
+
+  generateToneUri(type, multiplier) {
+    // This is a placeholder - in production use actual sound files
+    // For now, we'll use a silent data URI to avoid errors
+    return 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+  }
+
+  toggleMute() {
+    this.isMuted = !this.isMuted;
+    return this.isMuted;
+  }
+
+  async cleanup() {
+    try {
+      for (const sound of Object.values(this.sounds)) {
+        await sound.unloadAsync();
+      }
+      this.sounds = {};
+    } catch (error) {
+      console.warn('Sound cleanup failed:', error);
+    }
+  }
+}
+
+export const soundManager = new SoundManager();
+javascript// ============================================================================
+// src/services/AdService.js
+// ============================================================================
+import { analytics } from './AnalyticsService';
+
+class AdService {
+  constructor() {
+    this.isInitialized = false;
+    this.sessionCount = 0;
+    this.lastInterstitialTime = 0;
+  }
+
+  async initialize() {
+    if (this.isInitialized) return;
+    try {
+      // In production: Initialize AdMob
+      // await AdMobRewarded.setAdUnitID('ca-app-pub-xxxxx');
+      // await AdMobInterstitial.setAdUnitID('ca-app-pub-xxxxx');
+      this.isInitialized = true;
+      console.log('✅ Ad service initialized (Demo Mode)');
+    } catch (error) {
+      console.warn('Ad initialization failed:', error);
+    }
+  }
+
+  async showRewardedAd(rewardType) {
+    return new Promise((resolve) => {
+      console.log(`📺 [AD] Showing rewarded ad: ${rewardType}`);
+      analytics.logAdWatch(rewardType);
+      
+      // Simulate ad watch delay
+      setTimeout(() => {
+        resolve({ success: true });
+      }, 2000);
+    });
+  }
+
+  async showInterstitialAd() {
+    const now = Date.now();
+    
+    // Rate limit: max 1 interstitial per 3 minutes
+    if (now - this.lastInterstitialTime < 180000) {
+      return { success: false, reason: 'rate_limited' };
+    }
+    
+    this.sessionCount++;
+    
+    // Show every 3rd session
+    if (this.sessionCount % 3 !== 0) {
+      return { success: false, reason: 'session_count' };
+    }
+    
+    console.log('📺 [AD] Showing interstitial ad');
+    analytics.logAdWatch('interstitial');
+    this.lastInterstitialTime = now;
+    
+    return { success: true };
+  }
+}
+
+export const adService = new AdService();
+javascript// ============================================================================
+// src/services/AnalyticsService.js
+// ============================================================================
+class AnalyticsService {
+  logEvent(eventName, params = {}) {
+    console.log(`📊 [Analytics] ${eventName}`, params);
+    // In production: Firebase Analytics
+    // Analytics.logEvent(eventName, params);
+  }
+
+  logGameStart() {
+    this.logEvent('game_start', { timestamp: Date.now() });
+  }
+
+  logGameOver(score, combo, coins, xp) {
+    this.logEvent('game_over', { score, combo, coins, xp });
+  }
+
+  logAdWatch(adType) {
+    this.logEvent('ad_watch', { adType, timestamp: Date.now() });
+  }
+
+  logLevelUp(newLevel, totalXP) {
+    this.logEvent('level_up', { level: newLevel, totalXP });
+  }
+
+  logRewardClaim(rewardType, amount) {
+    this.logEvent('reward_claim', { rewardType, amount });
+  }
+}
+
+export const analytics = new AnalyticsService();
+javascript// ============================================================================
+// src/utils/GameLogic.js
+// ============================================================================
+export const GAME_CONSTANTS = {
+  GAME_DURATION: 30,
+  TARGET_SPAWN_INTERVAL: 900,
+  TARGET_LIFETIME: 2000,
+  MAX_HEALTH: 5,
+  COMBO_MULTIPLIER: 0.15,
+  LUCKY_TAP_CHANCE: 0.1,
+  LUCKY_TAP_MULTIPLIER: [2, 3, 5, 10],
+};
+
+export function generateTarget(screenWidth, screenHeight, difficulty = 1) {
+  const baseSize = 70;
+  const size = Math.max(40, baseSize - difficulty * 2);
+  const padding = 80;
+
+  const colors = ['#FF6B9D', '#4ECDC4', '#C44EEC', '#FFD93D', '#6BCF7F'];
+
+  return {
+    id: `target-${Date.now()}-${Math.random()}`,
+    x: padding + Math.random() * (screenWidth - padding * 2 - size),
+    y: padding + Math.random() * (screenHeight - padding * 2 - size),
+    size,
+    color: colors[Math.floor(Math.random() * colors.length)],
+    createdAt: Date.now(),
+    isLucky: Math.random() < GAME_CONSTANTS.LUCKY_TAP_CHANCE,
+  };
+}
+
+export function getComboTier(combo) {
+  const tiers = [
+    { threshold: 0, color: '#7F8C8D', label: '' },
+    { threshold: 3, color: '#4ECDC4', label: 'NICE!' },
+    { threshold: 5, color: '#C44EEC', label: 'GREAT!' },
+    { threshold: 10, color: '#FF6B9D', label: 'AMAZING!' },
+    { threshold: 20, color: '#FFD93D', label: 'LEGENDARY!' },
+  ];
+
+  return [...tiers].reverse().find(t => combo >= t.threshold) || tiers[0];
+}
+
+export function calculateScore(basePoints, combo) {
+  return Math.floor(basePoints * (1 + combo * GAME_CONSTANTS.COMBO_MULTIPLIER));
+}
+
+export function getLuckyBonus() {
+  const multipliers = GAME_CONSTANTS.LUCKY_TAP_MULTIPLIER;
+  return multipliers[Math.floor(Math.random() * multipliers.length)];
+}
+javascript// ============================================================================
+// src/components/NeonTarget.js
+// ============================================================================
+import React, { useEffect, useRef } from 'react';
+import { TouchableOpacity, View, Text, StyleSheet, Animated } from 'react-native';
+import { GAME_CONSTANTS } from '../utils/GameLogic';
+
+export default function NeonTarget({ target, onTap, combo }) {
+  const scaleAnim = useRef(new Animated.Value(0)).current;
+  const opacityAnim = useRef(new Animated.Value(1)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    // Entrance animation
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      tension: 50,
+      friction: 7,
+      useNativeDriver: true,
+    }).start();
+
+    // Lucky target pulse
+    if (target.isLucky) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.15,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    }
+
+    // Exit animation before lifetime ends
+    const timer = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(scaleAnim, {
+          toValue: 0.5,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacityAnim, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, GAME_CONSTANTS.TARGET_LIFETIME - 300);
+
+    return () => clearTimeout(timer);
+  }, [target.isLucky]);
+
+  const handlePress = () => {
+    Animated.parallel([
+      Animated.timing(scaleAnim, {
+        toValue: 1.5,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacityAnim, {
+        toValue: 0,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start(() => onTap(target));
+  };
+
+  const glowIntensity = 20 + combo * 2;
+
+  return (
+    <Animated.View
+      style={[
+        styles.container,
+        {
+          left: target.x,
+          top: target.y,
+          width: target.size,
+          height: target.size,
+          transform: [{ scale: Animated.multiply(scaleAnim, pulseAnim) }],
+          opacity: opacityAnim,
+        },
+      ]}
+    >
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={handlePress}
+        style={[
+          styles.target,
+          {
+            backgroundColor: target.color,
+            shadowColor: target.color,
+            shadowOpacity: 0.8,
+            shadowRadius: glowIntensity,
+            elevation: glowIntensity,
+            borderWidth: target.isLucky ? 3 : 0,
+            borderColor: '#FFD93D',
+          },
+        ]}
+      >
+        {target.isLucky && (
+          <Text style={styles.luckyIcon}>⭐</Text>
+        )}
+        <View style={styles.innerCircle} />
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    position: 'absolute',
+  },
+  target: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 1000,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowOffset: { width: 0, height: 0 },
+  },
+  innerCircle: {
+    width: '60%',
+    height: '60%',
+    borderRadius: 1000,
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  luckyIcon: {
+    position: 'absolute',
+    fontSize: 24,
+    zIndex: 1,
+  },
+});
+javascript// ============================================================================
+// src/components/Particle.js
+// ============================================================================
+import React, { useEffect, useRef } from 'react';
+import { View, StyleSheet, Animated } from 'react-native';
+
+export default function Particle({ x, y, color, onComplete }) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = 40 + Math.random() * 60;
+    const endX = Math.cos(angle) * distance;
+    const endY = Math.sin(angle) * distance;
+
+    Animated.parallel([
+      Animated.timing(translateX, {
+        toValue: endX,
+        duration: 700,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: endY,
+        duration: 700,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacity, {
+        toValue: 0,
+        duration: 700,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      if (onComplete) onComplete();
+    });
+  }, []);
+
+  return (
+    <Animated.View
+      style={[
+        styles.particle,
+        {
+          left: x,
+          top: y,
+          backgroundColor: color,
+          transform: [{ translateX }, { translateY }],
+          opacity,
+          shadowColor: color,
+        },
+      ]}
+    />
+  );
+}
+
+const styles = StyleSheet.create({
+  particle: {
+    position: 'absolute',
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+    elevation: 8,
+    shadowOffset: { width: 0, height: 0 },
+  },
+});
+javascript// ============================================================================
+// src/components/FloatingScore.js
+// ============================================================================
+import React, { useEffect, useRef } from 'react';
+import { Text, StyleSheet, Animated } from 'react-native';
+
+export default function FloatingScore({ x, y, text, color, onComplete }) {
+  const translateY = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(translateY, {
+        toValue: -60,
+        duration: 1000,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacity, {
+        toValue: 0,
+        duration: 1000,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      if (onComplete) onComplete();
+    });
+  }, []);
+
+  return (
+    <Animated.Text
+      style={[
+        styles.text,
+        {
+          left: x,
+          top: y,
+          color: color || '#FFD93D',
+          transform: [{ translateY }],
+          opacity,
+          textShadowColor: color || '#FFD93D',
+        },
+      ]}
+    >
+      {text}
+    </Animated.Text>
+  );
+}
+
+const styles = StyleSheet.create({
+  text: {
+    position: 'absolute',
+    fontSize: 24,
+    fontWeight: 'bold',
+    textShadowRadius: 10,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+});
+javascript// ============================================================================
+// src/components/ComboBar.js
+// ============================================================================
+import React from 'react';
+import { View, Text, StyleSheet, Animated } from 'react-native';
+import { getComboTier } from '../utils/GameLogic';
+
+export default function ComboBar({ combo, maxCombo }) {
+  const currentTier = getComboTier(combo);
+  const progress = Math.min(100, (combo / maxCombo) * 100);
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.content}>
+        <Text style={[styles.label, { color: currentTier.color }]}>
+          {combo > 0 ? `${combo}x COMBO` : 'NO COMBO'}
+        </Text>
+        {currentTier.label && (
+          <Text style={[styles.tier, { color: currentTier.color }]}>
+            {currentTier.label}
+          </Text>
+        )}
+      </View>
+      <View style={styles.barTrack}>
+        <View
+          style={[
+            styles.barFill,
+            {
+              width: `${progress}%`,
+              backgroundColor: currentTier.color,
+              shadowColor: currentTier.color,
+            },
+          ]}
+        />
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    width: '100%',
+    paddingHorizontal: 20,
+    marginBottom: 15,
+  },
+  content: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  label: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  tier: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  barTrack: {
+    height: 8,
+    backgroundColor: '#2C3E50',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  barFill: {
+    height: '100%',
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+    elevation: 4,
+    shadowOffset: { width: 0, height: 0 },
+  },
+});
+javascript// ============================================================================
+// src/screens/MenuScreen.js
+// ============================================================================
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Dimensions,
+  Animated,
+  Modal,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { storageService } from '../services/StorageService';
+import { adService } from '../services/AdService';
+import { analytics } from '../services/AnalyticsService';
+
+export default function MenuScreen({ navigation, playerData, onUpdateData }) {
+  // SAFE DIMENSIONS PATTERN
+  const [screenDimensions, setScreenDimensions] = useState({ width: 0, height: 0 });
+  
+  useEffect(() => {
+    const update = () => setScreenDimensions(Dimensions.get('window'));
+    update();
+    const sub = Dimensions.addEventListener('change', update);
+    return () => sub?.remove?.();
+  }, []);
+
+  const [scale] = useState(new Animated.Value(0.8));
+  const [showDailyReward, setShowDailyReward] = useState(false);
+  const [dailyRewardClaimed, setDailyRewardClaimed] = useState(false);
+
+  useEffect(() => {
+    Animated.spring(scale, {
+      toValue: 1,
+      tension: 50,
+      friction: 7,
+      useNativeDriver: true,
+    }).start();
+
+    checkDailyReward();
+  }, []);
+
+  const checkDailyReward = async () => {
+    const lastClaim = await storageService.getItem('lastDailyReward');
+    const now = Date.now();
+    
+    if (!lastClaim || now - lastClaim > 86400000) {
+      setTimeout(() => setShowDailyReward(true), 1000);
+    }
+  };
+
+  const claimDailyReward = async () => {
+    const result = await adService.showRewardedAd('daily_reward');
+    if (result.success) {
+      const bonus = { xp: 100, coins: 50 };
+      const newData = {
+        ...playerData,
+        xp: playerData.xp + bonus.xp,
+        coins: playerData.coins + bonus.coins,
+      };
+      
+      await storageService.setItem('playerData', newData);
+      await storageService.setItem('lastDailyReward', Date.now());
+      
+      onUpdateData(newData);
+      setDailyRewardClaimed(true);
+      analytics.logRewardClaim('daily_reward', bonus.coins);
+      
+      setTimeout(() => setShowDailyReward(false), 2000);
+    }
+  };
+
+  const level = Math.floor(playerData.xp / 100) + 1;
+  const xpToNext = 100 - (playerData.xp % 100);
+  const xpProgress = (playerData.xp % 100);
+
+  if (screenDimensions.width === 0) {
+    return <View style={styles.container} />;
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <Animated.View style={{ transform: [{ scale }] }}>
+        <Text style={styles.title}>⚡ NEON TAP ⚡</Text>
+        <Text style={styles.subtitle}>Ultimate Reflex Challenge</Text>
+      </Animated.View>
+
+      <View style={styles.statsCard}>
+        <View style={styles.statRow}>
+          <Text style={styles.statLabel}>⭐ Level {level}</Text>
+          <Text style={styles.statValue}>{xpToNext} XP to next</Text>
+        </View>
+        <View style={styles.progressBar}>
+          <View style={[styles.progressFill, { width: `${xpProgress}%` }]} />
+        </View>
+        <View style={styles.statRow}>
+          <Text style={styles.statLabel}>💰 Coins</Text>
+          <Text style={styles.statValue}>{playerData.coins}</Text>
+        </View>
+        <View style={styles.statRow}>
+          <Text style={styles.statLabel}>🏆 High Score</Text>
+          <Text style={RetryOContinuejavascript          <Text style={styles.statValue}>{playerData.highScore || 0}</Text>
+        </View>
+        <View style={styles.statRow}>
+          <Text style={styles.statLabel}>🔥 Best Combo</Text>
+          <Text style={styles.statValue}>x{playerData.maxCombo || 0}</Text>
+        </View>
+        <View style={styles.statRow}>
+          <Text style={styles.statLabel}>🎮 Games Played</Text>
+          <Text style={styles.statValue}>{playerData.gamesPlayed || 0}</Text>
+        </View>
+      </View>
+
+      <View style={styles.menuContainer}>
+        <TouchableOpacity
+          style={styles.playButton}
+          onPress={() => navigation.navigate('Game')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.playButtonText}>PLAY NOW</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={styles.menuButton}
+          onPress={() => navigation.navigate('Shop')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.menuButtonText}>🛍️ Shop</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={styles.menuButton}
+          onPress={() => navigation.navigate('Achievements')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.menuButtonText}>🏆 Achievements</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={styles.menuButton}
+          onPress={() => navigation.navigate('Instructions')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.menuButtonText}>📖 How to Play</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Daily Reward Modal */}
+      <Modal visible={showDailyReward} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>🎁 Daily Reward!</Text>
+            {!dailyRewardClaimed ? (
+              <>
+                <Text style={styles.modalText}>Watch an ad to claim:</Text>
+                <Text style={[styles.modalText, styles.rewardXP]}>+100 XP</Text>
+                <Text style={[styles.modalText, styles.rewardCoins]}>+50 Coins</Text>
+                <TouchableOpacity style={styles.adButton} onPress={claimDailyReward}>
+                  <Text style={styles.adButtonText}>📺 Claim Reward</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.skipButton}
+                  onPress={() => setShowDailyReward(false)}
+                >
+                  <Text style={styles.skipButtonText}>Maybe Later</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.modalText, styles.claimedText]}>✅ Reward Claimed!</Text>
+                <Text style={styles.modalText}>Come back tomorrow!</Text>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <Text style={styles.footer}>Expo SDK 54 • High-Retention Game</Text>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  title: {
+    color: '#4ECDC4',
+    fontSize: 48,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 10,
+    textShadowColor: '#4ECDC4',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 20,
+  },
+  subtitle: {
+    color: '#FF6B9D',
+    fontSize: 18,
+    textAlign: 'center',
+    marginBottom: 40,
+    textShadowColor: '#FF6B9D',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
+  },
+  statsCard: {
+    backgroundColor: 'rgba(44, 62, 80, 0.8)',
+    borderRadius: 15,
+    padding: 20,
+    width: '100%',
+    maxWidth: 400,
+    marginBottom: 30,
+    shadowColor: '#4ECDC4',
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  statRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  statLabel: {
+    color: '#BDC3C7',
+    fontSize: 16,
+  },
+  statValue: {
+    color: '#ECF0F1',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  progressBar: {
+    height: 10,
+    backgroundColor: '#2C3E50',
+    borderRadius: 5,
+    overflow: 'hidden',
+    marginBottom: 15,
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#4ECDC4',
+    shadowColor: '#4ECDC4',
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  menuContainer: {
+    width: '100%',
+    maxWidth: 400,
+    gap: 15,
+  },
+  playButton: {
+    backgroundColor: '#FF6B6B',
+    paddingVertical: 20,
+    borderRadius: 15,
+    alignItems: 'center',
+    shadowColor: '#FF6B6B',
+    shadowOpacity: 0.6,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  playButtonText: {
+    color: '#FFF',
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  menuButton: {
+    backgroundColor: 'rgba(78, 205, 196, 0.3)',
+    borderWidth: 2,
+    borderColor: '#4ECDC4',
+    paddingVertical: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  menuButtonText: {
+    color: '#4ECDC4',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  footer: {
+    color: '#7F8C8D',
+    fontSize: 12,
+    marginTop: 30,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#2C3E50',
+    borderRadius: 20,
+    padding: 30,
+    width: '85%',
+    maxWidth: 400,
+    shadowColor: '#4ECDC4',
+    shadowOpacity: 0.5,
+    shadowRadius: 40,
+    elevation: 20,
+  },
+  modalTitle: {
+    color: '#4ECDC4',
+    fontSize: 32,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 20,
+    textShadowColor: '#4ECDC4',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 20,
+  },
+  modalText: {
+    color: '#BDC3C7',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  rewardXP: {
+    color: '#4ECDC4',
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  rewardCoins: {
+    color: '#FFD93D',
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 20,
+  },
+  claimedText: {
+    color: '#4ECDC4',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  adButton: {
+    backgroundColor: '#FFD93D',
+    paddingVertical: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+    shadowColor: '#FFD93D',
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  adButtonText: {
+    color: '#1a1a2e',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  skipButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    borderColor: '#7F8C8D',
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  skipButtonText: {
+    color: '#7F8C8D',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+});
+javascript// ============================================================================
+// src/screens/GameScreen.js
+// ============================================================================
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Dimensions,
+  Modal,
+  Animated,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
+import { soundManager } from '../services/SoundManager';
+import { adService } from '../services/AdService';
+import { storageService } from '../services/StorageService';
+import { analytics } from '../services/AnalyticsService';
+import { GAME_CONSTANTS, generateTarget, calculateScore, getLuckyBonus } from '../utils/GameLogic';
+import NeonTarget from '../components/NeonTarget';
+import Particle from '../components/Particle';
+import FloatingScore from '../components/FloatingScore';
+import ComboBar from '../components/ComboBar';
+
+export default function GameScreen({ navigation, playerData, onUpdateData }) {
+  // SAFE DIMENSIONS PATTERN
+  const [screenDimensions, setScreenDimensions] = useState({ width: 0, height: 0 });
+  
+  useEffect(() => {
+    const update = () => setScreenDimensions(Dimensions.get('window'));
+    update();
+    const sub = Dimensions.addEventListener('change', update);
+    return () => sub?.remove?.();
+  }, []);
+
+  const [targets, setTargets] = useState([]);
+  const [particles, setParticles] = useState([]);
+  const [floatingTexts, setFloatingTexts] = useState([]);
+  const [score, setScore] = useState(0);
+  const [combo, setCombo] = useState(0);
+  const [maxCombo, setMaxCombo] = useState(0);
+  const [health, setHealth] = useState(GAME_CONSTANTS.MAX_HEALTH);
+  const [timeLeft, setTimeLeft] = useState(GAME_CONSTANTS.GAME_DURATION);
+  const [gameActive, setGameActive] = useState(true);
+  const [gameOver, setGameOver] = useState(false);
+  const [earnedXP, setEarnedXP] = useState(0);
+  const [earnedCoins, setEarnedCoins] = useState(0);
+  const [showReviveOption, setShowReviveOption] = useState(false);
+  const [showDoubleReward, setShowDoubleReward] = useState(false);
+  const [hasRevived, setHasRevived] = useState(false);
+  const [difficulty, setDifficulty] = useState(1);
+
+  const spawnTimerRef = useRef(null);
+  const gameTimerRef = useRef(null);
+  const targetCleanupRef = useRef(null);
+
+  const gameAreaWidth = screenDimensions.width - 40;
+  const gameAreaHeight = screenDimensions.height * 0.6;
+
+  useEffect(() => {
+    analytics.logGameStart();
+  }, []);
+
+  // Dynamic difficulty
+  useEffect(() => {
+    const newDifficulty = Math.floor(score / 200) + 1;
+    setDifficulty(Math.min(5, newDifficulty));
+  }, [score]);
+
+  // Spawn targets
+  useEffect(() => {
+    if (!gameActive || screenDimensions.width === 0) return;
+
+    spawnTimerRef.current = setInterval(() => {
+      setTargets(prev => [
+        ...prev,
+        generateTarget(gameAreaWidth, gameAreaHeight, difficulty)
+      ]);
+    }, Math.max(600, GAME_CONSTANTS.TARGET_SPAWN_INTERVAL - difficulty * 100));
+
+    return () => {
+      if (spawnTimerRef.current) clearInterval(spawnTimerRef.current);
+    };
+  }, [gameActive, gameAreaWidth, gameAreaHeight, difficulty, screenDimensions.width]);
+
+  // Cleanup expired targets
+  useEffect(() => {
+    if (!gameActive) return;
+
+    targetCleanupRef.current = setInterval(() => {
+      const now = Date.now();
+      setTargets(prev => {
+        const remaining = prev.filter(t => now - t.createdAt < GAME_CONSTANTS.TARGET_LIFETIME);
+        const expired = prev.length - remaining.length;
+        
+        if (expired > 0) {
+          setHealth(h => Math.max(0, h - expired));
+          setCombo(0);
+          soundManager.playSound('miss');
+          try {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          } catch (e) {}
+        }
+        
+        return remaining;
+      });
+    }, 100);
+
+    return () => {
+      if (targetCleanupRef.current) clearInterval(targetCleanupRef.current);
+    };
+  }, [gameActive]);
+
+  // Game timer
+  useEffect(() => {
+    if (!gameActive) return;
+
+    gameTimerRef.current = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          setGameActive(false);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      if (gameTimerRef.current) clearInterval(gameTimerRef.current);
+    };
+  }, [gameActive]);
+
+  // Health check - offer revive
+  useEffect(() => {
+    if (health <= 0 && gameActive && !hasRevived) {
+      setGameActive(false);
+      setShowReviveOption(true);
+    } else if (health <= 0 && hasRevived) {
+      setGameActive(false);
+    }
+  }, [health, gameActive, hasRevived]);
+
+  // Game over
+  useEffect(() => {
+    if (!gameActive && !gameOver && !showReviveOption) {
+      handleGameOver();
+    }
+  }, [gameActive, gameOver, showReviveOption]);
+
+  const handleGameOver = () => {
+    setGameOver(true);
+    soundManager.playSound('gameOver');
+    
+    const xp = Math.floor(score / 8);
+    const coins = Math.floor(score / 30) + Math.floor(maxCombo / 5);
+    setEarnedXP(xp);
+    setEarnedCoins(coins);
+    
+    analytics.logGameOver(score, maxCombo, coins, xp);
+    setShowDoubleReward(true);
+  };
+
+  const handleRevive = async () => {
+    const result = await adService.showRewardedAd('revive');
+    if (result.success) {
+      setShowReviveOption(false);
+      setHealth(2);
+      setGameActive(true);
+      setHasRevived(true);
+      analytics.logRewardClaim('revive', 2);
+    }
+  };
+
+  const handleDoubleReward = async () => {
+    const result = await adService.showRewardedAd('double_reward');
+    if (result.success) {
+      const finalXP = earnedXP * 2;
+      const finalCoins = earnedCoins * 2;
+      setEarnedXP(finalXP);
+      setEarnedCoins(finalCoins);
+      setShowDoubleReward(false);
+      saveProgress(finalXP, finalCoins);
+      analytics.logRewardClaim('double_reward', finalCoins);
+    }
+  };
+
+  const handleSkipAd = () => {
+    setShowDoubleReward(false);
+    saveProgress(earnedXP, earnedCoins);
+  };
+
+  const saveProgress = (xp, coins) => {
+    const newXP = playerData.xp + xp;
+    const oldLevel = Math.floor(playerData.xp / 100) + 1;
+    const newLevel = Math.floor(newXP / 100) + 1;
+    
+    if (newLevel > oldLevel) {
+      soundManager.playSound('levelUp');
+      analytics.logLevelUp(newLevel, newXP);
+    }
+    
+    const newData = {
+      ...playerData,
+      xp: newXP,
+      coins: playerData.coins + coins,
+      highScore: Math.max(playerData.highScore || 0, score),
+      maxCombo: Math.max(playerData.maxCombo || 0, maxCombo),
+      gamesPlayed: (playerData.gamesPlayed || 0) + 1,
+    };
+    
+    storageService.setItem('playerData', newData);
+    onUpdateData(newData);
+  };
+
+  const handleTap = useCallback((target) => {
+    setTargets(prev => prev.filter(t => t.id !== target.id));
+
+    // Create particles
+    const newParticles = Array.from({ length: 10 }, (_, i) => ({
+      id: `particle-${Date.now()}-${i}`,
+      x: target.x + target.size / 2,
+      y: target.y + target.size / 2,
+      color: target.color,
+    }));
+    setParticles(prev => [...prev, ...newParticles]);
+
+    // Score calculation
+    const newCombo = combo + 1;
+    let points = 10;
+    let coinsEarned = 0;
+    let bonusText = null;
+    
+    // Lucky tap bonus
+    if (target.isLucky) {
+      const multiplier = getLuckyBonus();
+      coinsEarned = multiplier * 5;
+      bonusText = `+${coinsEarned} 💰`;
+      soundManager.playSound('luckyTap');
+      setEarnedCoins(prev => prev + coinsEarned);
+      try {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (e) {}
+    } else {
+      points = calculateScore(points, newCombo);
+      soundManager.playSound('tap', newCombo);
+      try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      } catch (e) {}
+    }
+    
+    // Floating score text
+    const floatingText = {
+      id: `float-${Date.now()}`,
+      x: target.x + target.size / 2 - 20,
+      y: target.y,
+      text: bonusText || `+${points}`,
+      color: bonusText ? '#FFD93D' : target.color,
+    };
+    setFloatingTexts(prev => [...prev, floatingText]);
+
+    setScore(s => s + points);
+    setCombo(newCombo);
+    setMaxCombo(m => Math.max(m, newCombo));
+    
+    // Combo milestone sounds
+    if (newCombo % 5 === 0) {
+      soundManager.playSound('combo', newCombo);
+      try {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (e) {}
+    }
+  }, [combo]);
+
+  const handleMiss = () => {
+    setCombo(0);
+  };
+
+  const removeParticle = useCallback((particleId) => {
+    setParticles(prev => prev.filter(p => p.id !== particleId));
+  }, []);
+
+  const removeFloatingText = useCallback((textId) => {
+    setFloatingTexts(prev => prev.filter(t => t.id !== textId));
+  }, []);
+
+  if (screenDimensions.width === 0) {
+    return <View style={styles.container} />;
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      {/* Combo Bar */}
+      <ComboBar combo={combo} maxCombo={50} />
+
+      {/* HUD */}
+      <View style={styles.hud}>
+        <View style={styles.hudItem}>
+          <Text style={styles.hudLabel}>Score</Text>
+          <Text style={styles.hudValue}>{score}</Text>
+        </View>
+        <View style={styles.hudItem}>
+          <Text style={styles.hudLabel}>Time</Text>
+          <Text style={[styles.hudValue, timeLeft <= 10 && styles.hudValueWarning]}>
+            {timeLeft}s
+          </Text>
+        </View>
+      </View>
+
+      {/* Health Bar */}
+      <View style={styles.healthBar}>
+        {Array.from({ length: GAME_CONSTANTS.MAX_HEALTH }).map((_, i) => (
+          <View
+            key={i}
+            style={[
+              styles.healthHeart,
+              i < health ? styles.healthHeartActive : styles.healthHeartInactive,
+            ]}
+          />
+        ))}
+      </View>
+
+      {/* Game Area */}
+      <TouchableOpacity
+        activeOpacity={1}
+        onPress={handleMiss}
+        style={[styles.gameArea, { width: gameAreaWidth, height: gameAreaHeight }]}
+      >
+        {targets.map(target => (
+          <NeonTarget
+            key={target.id}
+            target={target}
+            onTap={handleTap}
+            combo={combo}
+          />
+        ))}
+        {particles.map(particle => (
+          <Particle
+            key={particle.id}
+            {...particle}
+            onComplete={() => removeParticle(particle.id)}
+          />
+        ))}
+        {floatingTexts.map(text => (
+          <FloatingScore
+            key={text.id}
+            {...text}
+            onComplete={() => removeFloatingText(text.id)}
+          />
+        ))}
+      </TouchableOpacity>
+
+      {/* Revive Modal */}
+      <Modal visible={showReviveOption} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>💔 Continue?</Text>
+            <Text style={styles.modalText}>Watch an ad to revive with 2 lives!</Text>
+            <Text style={styles.modalScore}>
+              Score: {score} | Combo: {maxCombo}x
+            </Text>
+            <TouchableOpacity style={styles.adButton} onPress={handleRevive}>
+              <Text style={styles.adButtonText}>📺 Watch Ad & Revive</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.skipButton}
+              onPress={() => {
+                setShowReviveOption(false);
+                handleGameOver();
+              }}
+            >
+              <Text style={styles.skipButtonText}>No Thanks</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Game Over Modal */}
+      <Modal visible={gameOver} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>🎮 Game Over!</Text>
+            <View style={styles.statsContainer}>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Final Score:</Text>
+                <Text style={styles.statValue}>{score}</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Best Combo:</Text>
+                <Text style={styles.statValue}>x{maxCombo}</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>XP Earned:</Text>
+                <Text style={[styles.statValue, styles.xpValue]}>
+                  +{earnedXP} {showDoubleReward && `→ ${earnedXP * 2}`}
+                </Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Coins Earned:</Text>
+                <Text style={[styles.statValue, styles.coinsValue]}>
+                  +{earnedCoins} {showDoubleReward && `→ ${earnedCoins * 2}`}
+                </Text>
+              </View>
+            </View>
+            
+            {showDoubleReward ? (
+              <>
+                <TouchableOpacity style={styles.adButton} onPress={handleDoubleReward}>
+                  <Text style={styles.adButtonText}>📺 Watch Ad → 2× Rewards!</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.skipButton} onPress={handleSkipAd}>
+                  <Text style={styles.skipButtonText}>Skip</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.playAgainButton}
+                  onPress={() => navigation.replace('Game')}
+                >
+                  <Text style={styles.playAgainButtonText}>Play Again</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.menuButton}
+                  onPress={() => navigation.navigate('Menu')}
+                >
+                  <Text style={styles.menuButtonText}>Main Menu</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+    alignItems: 'center',
+  },
+  hud: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    paddingHorizontal: 20,
+    marginBottom: 15,
+  },
+  hudItem: {
+    alignItems: 'center',
+  },
+  hudLabel: {
+    color: '#BDC3C7',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 5,
+  },
+  hudValue: {
+    color: '#4ECDC4',
+    fontSize: 28,
+    fontWeight: 'bold',
+    textShadowColor: '#4ECDC4',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
+  },
+  hudValueWarning: {
+    color: '#FF6B6B',
+    textShadowColor: '#FF6B6B',
+  },
+  healthBar: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 15,
+  },
+  healthHeart: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+  },
+  healthHeartActive: {
+    backgroundColor: '#FF6B6B',
+    shadowColor: '#FF6B6B',
+    shadowOpacity: 0.8,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  healthHeartInactive: {
+    backgroundColor: '#2C3E50',
+  },
+  gameArea: {
+    backgroundColor: 'rgba(26, 26, 46, 0.5)',
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: 'rgba(78, 205, 196, 0.3)',
+    overflow: 'hidden',
+    shadowColor: '#4ECDC4',
+    shadowOpacity: 0.2,
+    shadowRadius: 30,
+    elevation: 10,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#2C3E50',
+    borderRadius: 20,
+    padding: 30,
+    width: '85%',
+    maxWidth: 400,
+    shadowColor: '#4ECDC4',
+    shadowOpacity: 0.5,
+    shadowRadius: 40,
+    elevation: 20,
+  },
+  modalTitle: {
+    color: '#4ECDC4',
+    fontSize: 32,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 20,
+    textShadowColor: '#4ECDC4',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 20,
+  },
+  modalText: {
+    color: '#BDC3C7',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  modalScore: {
+    color: '#FFD93D',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 20,
+    fontWeight: 'bold',
+  },
+  statsContainer: {
+    marginBottom: 20,
+  },
+  statRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  statLabel: {
+    color: '#BDC3C7',
+    fontSize: 16,
+  },
+  statValue: {
+    color: '#ECF0F1',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  xpValue: {
+    color: '#4ECDC4',
+  },
+  coinsValue: {
+    color: '#FFD93D',
+  },
+  adButton: {
+    backgroundColor: '#FFD93D',
+    paddingVertical: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+    shadowColor: '#FFD93D',
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  adButtonText: {
+    color: '#1a1a2e',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  skipButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    borderColor: '#7F8C8D',
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  skipButtonText: {
+    color: '#7F8C8D',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  playAgainButton: {
+    backgroundColor: '#4ECDC4',
+    paddingVertical: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+    shadowColor: '#4ECDC4',
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  playAgainButtonText: {
+    color: '#1a1a2e',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  menuButton: {RetryOContinuejavascript  menuButton: {
+    backgroundColor: '#95A5A6',
+    paddingVertical: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  menuButtonText: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+});
+javascript// ============================================================================
+// src/screens/ShopScreen.js
+// ============================================================================
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  Dimensions,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { storageService } from '../services/StorageService';
+import { soundManager } from '../services/SoundManager';
+
+const THEMES = [
+  { id: 'classic', name: 'Classic Neon', price: 0, unlocked: true, colors: ['#FF6B9D', '#4ECDC4', '#C44EEC'] },
+  { id: 'fire', name: 'Fire Storm', price: 100, colors: ['#FF6B35', '#F7931E', '#FFD93D'] },
+  { id: 'ocean', name: 'Ocean Deep', price: 150, colors: ['#4ECDC4', '#0EA5E9', '#8B5CF6'] },
+  { id: 'sunset', name: 'Sunset Glow', price: 200, colors: ['#FF6B9D', '#FF8E53', '#FFD93D'] },
+  { id: 'toxic', name: 'Toxic Waste', price: 300, colors: ['#6BCF7F', '#84CC16', '#FFD93D'] },
+];
+
+export default function ShopScreen({ navigation, playerData, onUpdateData }) {
+  // SAFE DIMENSIONS PATTERN
+  const [screenDimensions, setScreenDimensions] = useState({ width: 0, height: 0 });
+  
+  useEffect(() => {
+    const update = () => setScreenDimensions(Dimensions.get('window'));
+    update();
+    const sub = Dimensions.addEventListener('change', update);
+    return () => sub?.remove?.();
+  }, []);
+
+  const [unlockedThemes, setUnlockedThemes] = useState(['classic']);
+
+  useEffect(() => {
+    loadUnlockedThemes();
+  }, []);
+
+  const loadUnlockedThemes = async () => {
+    const unlocked = await storageService.getItem('unlockedThemes');
+    if (unlocked) {
+      setUnlockedThemes(unlocked);
+    }
+  };
+
+  const handlePurchase = async (theme) => {
+    if (playerData.coins >= theme.price) {
+      const newCoins = playerData.coins - theme.price;
+      const newUnlocked = [...unlockedThemes, theme.id];
+      
+      const newData = { ...playerData, coins: newCoins };
+      await storageService.setItem('playerData', newData);
+      await storageService.setItem('unlockedThemes', newUnlocked);
+      
+      setUnlockedThemes(newUnlocked);
+      onUpdateData(newData);
+      soundManager.playSound('coin');
+    }
+  };
+
+  if (screenDimensions.width === 0) {
+    return <View style={styles.container} />;
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Text style={styles.backButtonText}>← Back</Text>
+        </TouchableOpacity>
+        <Text style={styles.title}>🛍️ Theme Shop</Text>
+      </View>
+
+      <View style={styles.coinsDisplay}>
+        <Text style={styles.coinsText}>Your Coins: </Text>
+        <Text style={styles.coinsValue}>{playerData.coins} 💰</Text>
+      </View>
+
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        {THEMES.map(theme => {
+          const isUnlocked = unlockedThemes.includes(theme.id);
+          const canAfford = playerData.coins >= theme.price;
+          
+          return (
+            <View
+              key={theme.id}
+              style={[
+                styles.themeCard,
+                isUnlocked && styles.themeCardUnlocked,
+              ]}
+            >
+              <View style={styles.themeInfo}>
+                <Text style={styles.themeName}>{theme.name}</Text>
+                <View style={styles.colorPreview}>
+                  {theme.colors.map((color, i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.colorDot,
+                        {
+                          backgroundColor: color,
+                          shadowColor: color,
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
+              </View>
+              <View style={styles.themeAction}>
+                {isUnlocked ? (
+                  <Text style={styles.ownedText}>✅ Owned</Text>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => handlePurchase(theme)}
+                    disabled={!canAfford}
+                    style={[
+                      styles.purchaseButton,
+                      !canAfford && styles.purchaseButtonDisabled,
+                    ]}
+                  >
+                    <Text style={styles.purchaseButtonText}>{theme.price} 💰</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          );
+        })}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+  },
+  backButton: {
+    marginRight: 15,
+  },
+  backButtonText: {
+    color: '#4ECDC4',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  title: {
+    color: '#4ECDC4',
+    fontSize: 28,
+    fontWeight: 'bold',
+    textShadowColor: '#4ECDC4',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 15,
+  },
+  coinsDisplay: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 15,
+    backgroundColor: 'rgba(44, 62, 80, 0.5)',
+    marginHorizontal: 20,
+    borderRadius: 10,
+    marginBottom: 20,
+  },
+  coinsText: {
+    color: '#BDC3C7',
+    fontSize: 18,
+  },
+  coinsValue: {
+    color: '#FFD93D',
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  themeCard: {
+    backgroundColor: 'rgba(44, 62, 80, 0.8)',
+    borderRadius: 15,
+    padding: 15,
+    marginBottom: 15,
+    borderWidth: 2,
+    borderColor: '#2C3E50',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  themeCardUnlocked: {
+    borderColor: '#4ECDC4',
+    shadowColor: '#4ECDC4',
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  themeInfo: {
+    flex: 1,
+  },
+  themeName: {
+    color: '#ECF0F1',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  colorPreview: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  colorDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+    elevation: 5,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  themeAction: {
+    marginLeft: 15,
+  },
+  ownedText: {
+    color: '#4ECDC4',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  purchaseButton: {
+    backgroundColor: '#FFD93D',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    shadowColor: '#FFD93D',
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  purchaseButtonDisabled: {
+    backgroundColor: '#7F8C8D',
+    shadowOpacity: 0,
+  },
+  purchaseButtonText: {
+    color: '#1a1a2e',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+});
+javascript// ============================================================================
+// src/screens/AchievementsScreen.js
+// ============================================================================
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  Dimensions,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+export default function AchievementsScreen({ navigation, playerData }) {
+  // SAFE DIMENSIONS PATTERN
+  const [screenDimensions, setScreenDimensions] = useState({ width: 0, height: 0 });
+  
+  useEffect(() => {
+    const update = () => setScreenDimensions(Dimensions.get('window'));
+    update();
+    const sub = Dimensions.addEventListener('change', update);
+    return () => sub?.remove?.();
+  }, []);
+
+  const achievements = [
+    { id: 'first_win', name: 'First Victory', desc: 'Complete your first game', unlocked: playerData.gamesPlayed >= 1 },
+    { id: 'combo_5', name: 'Combo Starter', desc: 'Reach 5x combo', unlocked: (playerData.maxCombo || 0) >= 5 },
+    { id: 'combo_10', name: 'Combo Master', desc: 'Reach 10x combo', unlocked: (playerData.maxCombo || 0) >= 10 },
+    { id: 'combo_20', name: 'Combo Legend', desc: 'Reach 20x combo', unlocked: (playerData.maxCombo || 0) >= 20 },
+    { id: 'score_100', name: 'Century', desc: 'Score 100 points', unlocked: (playerData.highScore || 0) >= 100 },
+    { id: 'score_500', name: 'High Scorer', desc: 'Score 500 points', unlocked: (playerData.highScore || 0) >= 500 },
+    { id: 'score_1000', name: 'Elite Player', desc: 'Score 1000 points', unlocked: (playerData.highScore || 0) >= 1000 },
+    { id: 'level_5', name: 'Rising Star', desc: 'Reach level 5', unlocked: Math.floor(playerData.xp / 100) + 1 >= 5 },
+    { id: 'level_10', name: 'Pro Tapper', desc: 'Reach level 10', unlocked: Math.floor(playerData.xp / 100) + 1 >= 10 },
+    { id: 'games_10', name: 'Dedicated', desc: 'Play 10 games', unlocked: (playerData.gamesPlayed || 0) >= 10 },
+    { id: 'games_50', name: 'Addicted', desc: 'Play 50 games', unlocked: (playerData.gamesPlayed || 0) >= 50 },
+    { id: 'coins_500', name: 'Wealthy', desc: 'Collect 500 total coins', unlocked: (playerData.coins || 0) >= 500 },
+  ];
+
+  const unlockedCount = achievements.filter(a => a.unlocked).length;
+  const totalCount = achievements.length;
+  const progress = (unlockedCount / totalCount) * 100;
+
+  if (screenDimensions.width === 0) {
+    return <View style={styles.container} />;
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Text style={styles.backButtonText}>← Back</Text>
+        </TouchableOpacity>
+        <Text style={styles.title}>🏆 Achievements</Text>
+      </View>
+
+      <View style={styles.progressContainer}>
+        <Text style={styles.progressText}>
+          {unlockedCount} / {totalCount} Unlocked
+        </Text>
+        <View style={styles.progressBar}>
+          <View style={[styles.progressFill, { width: `${progress}%` }]} />
+        </View>
+      </View>
+
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        {achievements.map(ach => (
+          <View
+            key={ach.id}
+            style={[
+              styles.achievementCard,
+              ach.unlocked && styles.achievementCardUnlocked,
+            ]}
+          >
+            <View style={styles.achievementIcon}>
+              <Text style={styles.achievementIconText}>
+                {ach.unlocked ? '✅' : '🔒'}
+              </Text>
+            </View>
+            <View style={styles.achievementInfo}>
+              <Text style={[styles.achievementName, !ach.unlocked && styles.achievementLocked]}>
+                {ach.name}
+              </Text>
+              <Text style={styles.achievementDesc}>{ach.desc}</Text>
+            </View>
+          </View>
+        ))}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+  },
+  backButton: {
+    marginRight: 15,
+  },
+  backButtonText: {
+    color: '#4ECDC4',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  title: {
+    color: '#4ECDC4',
+    fontSize: 28,
+    fontWeight: 'bold',
+    textShadowColor: '#4ECDC4',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 15,
+  },
+  progressContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    marginBottom: 10,
+  },
+  progressText: {
+    color: '#BDC3C7',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  progressBar: {
+    height: 10,
+    backgroundColor: '#2C3E50',
+    borderRadius: 5,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#4ECDC4',
+    shadowColor: '#4ECDC4',
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  achievementCard: {
+    backgroundColor: 'rgba(44, 62, 80, 0.5)',
+    borderRadius: 15,
+    padding: 15,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#2C3E50',
+  },
+  achievementCardUnlocked: {
+    backgroundColor: 'rgba(78, 205, 196, 0.2)',
+    borderColor: '#4ECDC4',
+    shadowColor: '#4ECDC4',
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  achievementIcon: {
+    width: 50,
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 15,
+  },
+  achievementIconText: {
+    fontSize: 32,
+  },
+  achievementInfo: {
+    flex: 1,
+  },
+  achievementName: {
+    color: '#4ECDC4',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  achievementLocked: {
+    color: '#7F8C8D',
+  },
+  achievementDesc: {
+    color: '#BDC3C7',
+    fontSize: 14,
+  },
+});
+javascript// ============================================================================
+// src/screens/InstructionsScreen.js
+// ============================================================================
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  Dimensions,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+export default function InstructionsScreen({ navigation }) {
+  // SAFE DIMENSIONS PATTERN
+  const [screenDimensions, setScreenDimensions] = useState({ width: 0, height: 0 });
+  
+  useEffect(() => {
+    const update = () => setScreenDimensions(Dimensions.get('window'));
+    update();
+    const sub = Dimensions.addEventListener('change', update);
+    return () => sub?.remove?.();
+  }, []);
+
+  if (screenDimensions.width === 0) {
+    return <View style={styles.container} />;
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Text style={styles.backButtonText}>← Back</Text>
+        </TouchableOpacity>
+        <Text style={styles.title}>📖 How to Play</Text>
+      </View>
+
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.instructionBlock}>
+          <Text style={styles.icon}>🎯</Text>
+          <Text style={styles.instructionTitle}>Tap Targets Fast</Text>
+          <Text style={styles.instructionText}>
+            Tap glowing neon circles before they disappear (2 seconds each)
+          </Text>
+        </View>
+
+        <View style={styles.instructionBlock}>
+          <Text style={styles.icon}>⚡</Text>
+          <Text style={styles.instructionTitle}>Build Your Combo</Text>
+          <Text style={styles.instructionText}>
+            Consecutive taps multiply your score. Don't miss to keep it going!
+          </Text>
+        </View>
+
+        <View style={styles.instructionBlock}>
+          <Text style={styles.icon}>⭐</Text>
+          <Text style={styles.instructionTitle}>Lucky Targets</Text>
+          <Text style={styles.instructionText}>
+            Gold-bordered targets give 2-10x coin bonuses. Chase them!
+          </Text>
+        </View>
+
+        <View style={styles.instructionBlock}>
+          <Text style={styles.icon}>❤️</Text>
+          <Text style={styles.instructionTitle}>Watch Your Health</Text>
+          <Text style={styles.instructionText}>
+            Missing targets drains health. Game ends at 0 HP or 30 seconds.
+          </Text>
+        </View>
+
+        <View style={styles.instructionBlock}>
+          <Text style={styles.icon}>💎</Text>
+          <Text style={styles.instructionTitle}>Progress & Rewards</Text>
+          <Text style={styles.instructionText}>
+            Earn XP to level up and coins to unlock themes. Watch ads for bonuses!
+          </Text>
+        </View>
+
+        <View style={styles.instructionBlock}>
+          <Text style={styles.icon}>🔥</Text>
+          <Text style={styles.instructionTitle}>Combo Tiers</Text>
+          <Text style={styles.instructionText}>
+            3x = Nice! • 5x = Great! • 10x = Amazing! • 20x = Legendary!
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={styles.startButton}
+          onPress={() => navigation.navigate('Game')}
+        >
+          <Text style={styles.startButtonText}>Start Playing!</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+  },
+  backButton: {
+    marginRight: 15,
+  },
+  backButtonText: {
+    color: '#4ECDC4',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  title: {
+    color: '#4ECDC4',
+    fontSize: 28,
+    fontWeight: 'bold',
+    textShadowColor: '#4ECDC4',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 15,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  instructionBlock: {
+    backgroundColor: 'rgba(44, 62, 80, 0.6)',
+    borderRadius: 15,
+    padding: 20,
+    marginBottom: 15,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(78, 205, 196, 0.2)',
+  },
+  icon: {
+    fontSize: 48,
+    marginBottom: 10,
+  },
+  instructionTitle: {
+    color: '#4ECDC4',
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  instructionText: {
+    color: '#BDC3C7',
+    fontSize: 16,
+    lineHeight: 24,
+    textAlign: 'center',
+  },
+  startButton: {
+    backgroundColor: '#FF6B6B',
+    paddingVertical: 18,
+    borderRadius: 15,
+    alignItems: 'center',
+    marginTop: 10,
+    shadowColor: '#FF6B6B',
+    shadowOpacity: 0.6,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  startButtonText: {
+    color: '#FFF',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+});
+javascript// ============================================================================
+// .gitignore
+// ============================================================================
+node_modules/
+.expo/
+.expo-shared/
+npm-debug.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+dist/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+logs
+*.log
+
+# Environment
+.env
+.env.local
+javascript// ============================================================================
+// README.md
+// ============================================================================
+# 🎮 Neon Tap - High-Retention Reflex Game
+
+Production-ready mobile game built with Expo SDK 54 featuring dopamine-driven mechanics and ad monetization.
+
+## 📱 Features
+
+- ⚡ Fast-paced reflex gameplay
+- 🎯 Dynamic combo system with visual feedback
+- ⭐ Lucky tap bonuses (2-10x coins)
+- 💰 Coin economy & theme shop
+- 🏆 Achievement system
+- 📊 XP & leveling progression
+- 📺 Rewarded ad integration (revive, double rewards, daily bonus)
+- 💾 Persistent storage with AsyncStorage
+- 🎨 Neon aesthetic with glowing particles
+- 📱 Full haptic feedback support
+
+## 🚀 Quick Start
+```bash
+# Install dependencies
+npm install
+
+# Start Expo development server
+npx expo start
+
+# Run on iOS
+npx expo start --ios
+
+# Run on Android
+npx expo start --android
+```
+
+## 📦 Project Structure
+```
+neon-tap/
+├── App.js                      # Root component with navigation
+├── index.js                    # Entry point
+├── package.json
+├── app.json
+├── babel.config.js
+└── src/
+    ├── screens/
+    │   ├── MenuScreen.js       # Main menu with player stats
+    │   ├── GameScreen.js       # Core gameplay
+    │   ├── ShopScreen.js       # Theme shop
+    │   ├── AchievementsScreen.js
+    │   └── InstructionsScreen.js
+    ├── components/
+    │   ├── NeonTarget.js       # Animated tap targets
+    │   ├── Particle.js         # Particle effects
+    │   ├── FloatingScore.js    # Floating score text
+    │   └── ComboBar.js         # Combo progress indicator
+    ├── services/
+    │   ├── StorageService.js   # AsyncStorage wrapper
+    │   ├── SoundManager.js     # Audio management
+    │   ├── AdService.js        # Ad integration
+    │   └── AnalyticsService.js # Event tracking
+    └── utils/
+        └── GameLogic.js        # Game mechanics & calculations
+```
+
+## 🎯 Game Mechanics
+
+- **Duration**: 30 seconds per game
+- **Health**: 5 lives (lose 1 per missed target)
+- **Combo System**: Score multiplier increases with consecutive taps
+- **Lucky Targets**: 10% chance, gold border, 2-10x coin bonus
+- **Dynamic Difficulty**: Target spawn rate increases with score
+
+## 💰 Monetization
+
+- **Revive Ad**: Continue with 2 lives (one-time per game)
+- **Double Rewards**: 2x XP and coins after game over
+- **Daily Reward**: 100 XP + 50 coins every 24 hours
+- **Interstitial Ads**: Every 3rd game session (rate-limited)
+
+## 🏆 Progression
+
+- **XP System**: 100 XP per level
+- **Coins**: Earned from gameplay and lucky taps
+- **Themes**: 5 unlockable color schemes (100-300 coins)
+- **Achievements**: 12 milestones to unlock
+
+## ⚙️ Runtime Safety
+
+All React Native APIs are safely initialized:
+- ✅ Dimensions.get() in useEffect with event listeners
+- ✅ AsyncStorage lazy initialization
+- ✅ Audio lazy initialization
+- ✅ Navigation stack created dynamically
+- ✅ No circular dependencies
+- ✅ Proper cleanup on unmount
+
+## 📊 Analytics Events
+
+- `game_start`
+- `game_over` (score, combo, coins, xp)
+- `ad_watch` (type)
+- `level_up` (level, totalXP)
+- `reward_claim` (type, amount)
+
+## 🎨 Customization
+
+Edit color schemes in `src/screens/ShopScreen.js`:
+```javascript
+const THEMES = [
+  { id: 'custom', name: 'Custom Theme', price: 150, colors: ['#HEX1', '#HEX2', '#HEX3'] },
+];
+```
+
+## 📝 License
+
+MIT License - Free for personal and commercial use
+
+## 🤝 Support
+
+For issues or questions, open an issue on GitHub.
+
+---
+
+Built with ❤️ using Expo SDK 54

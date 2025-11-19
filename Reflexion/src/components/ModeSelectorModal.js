@@ -1,27 +1,33 @@
-import React, { useMemo } from 'react';
+import React, { useRef, useEffect } from 'react';
 import {
   View,
   Text,
   Modal,
   TouchableOpacity,
+  ScrollView,
   StyleSheet,
   Animated,
-  Pressable,
 } from 'react-native';
-import { GAME_MODES, isModeUnlocked } from '../utils/GameLogic';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GAME_MODES } from '../utils/GameLogic';
+import { MODE_COLORS } from '../utils/themeTokens';
+import { ANIMATION_EASING } from '../utils/animationConstants';
 
 /**
  * ModeSelectorModal - Modal for selecting game mode
- * Shows Classic, Rush, and Zen modes with unlock status
+ * CRITICAL FIX: Restored game mode buttons with proper layout
  */
 export default function ModeSelectorModal({ visible, onClose, onSelectMode, playerLevel }) {
+  const insets = useSafeAreaInsets();
+  
+  // VISUAL UPGRADE: Mode colors using centralized MODE_COLORS
   const modes = [
     {
       id: GAME_MODES.CLASSIC,
       name: 'Classic Mode',
       icon: '⚡',
       description: 'Standard gameplay',
-      color: '#4ECDC4',
+      color: MODE_COLORS.CLASSIC, // VISUAL UPGRADE: Turquoise
       unlocked: true,
     },
     {
@@ -29,7 +35,7 @@ export default function ModeSelectorModal({ visible, onClose, onSelectMode, play
       name: 'Rush Mode',
       icon: '💥',
       description: '30s fast round, combo boost every 5 taps',
-      color: '#FF6B9D',
+      color: MODE_COLORS.RUSH, // VISUAL UPGRADE: Energy Neon Red/Orange
       unlocked: true,
     },
     {
@@ -37,18 +43,76 @@ export default function ModeSelectorModal({ visible, onClose, onSelectMode, play
       name: 'Zen Mode',
       icon: '🧠',
       description: 'Slow tempo, soothing visuals, no scoring',
-      color: '#C56CF0',
+      color: MODE_COLORS.ZEN, // VISUAL UPGRADE: Soft Lavender
       unlocked: true,
     },
     {
       id: GAME_MODES.SPEED_TEST,
       name: 'Speed Test',
-      icon: '⚡',
+      icon: '⏱️',
       description: 'Measure your reaction time',
-      color: '#FFD93D',
+      color: MODE_COLORS.SPEED_TEST, // VISUAL UPGRADE: Ice-Blue / Steel gray
       unlocked: true,
     },
   ];
+
+  // VISUAL UPGRADE: Micro-animations for mode cards
+  const modeAnims = modes.map(() => ({
+    scale: useRef(new Animated.Value(1)).current,
+    glow: useRef(new Animated.Value(0.75)).current,
+  }));
+
+  useEffect(() => {
+    if (!visible) return;
+
+    // VISUAL UPGRADE: Breathing glow and micro-bounce for each mode card
+    modeAnims.forEach((anim, index) => {
+      // Stagger animations
+      const delay = index * 150;
+
+      // === EASING FIX START ===
+      // Breathing glow (opacity 0.75 → 1.0)
+      const breathingGlow = Animated.loop(
+        Animated.sequence([
+          Animated.timing(anim.glow, {
+            toValue: 1.0,
+            duration: 2000,
+            delay,
+            easing: ANIMATION_EASING.DOPAMINE_EASING_OUT_CUBIC,
+            useNativeDriver: true,
+          }),
+          Animated.timing(anim.glow, {
+            toValue: 0.75,
+            duration: 2000,
+            easing: ANIMATION_EASING.DOPAMINE_EASING_OUT_CUBIC,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      breathingGlow.start();
+
+      // Soft scale micro-bounce (1.0 → 1.02 → 1.0)
+      const microBounce = Animated.loop(
+        Animated.sequence([
+          Animated.timing(anim.scale, {
+            toValue: 1.02,
+            duration: 1500,
+            delay,
+            easing: ANIMATION_EASING.DOPAMINE_EASING_OUT_CUBIC,
+            useNativeDriver: true,
+          }),
+          Animated.timing(anim.scale, {
+            toValue: 1.0,
+            duration: 1500,
+            easing: ANIMATION_EASING.DOPAMINE_EASING_OUT_CUBIC,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      microBounce.start();
+      // === EASING FIX END ===
+    });
+  }, [visible]);
 
   const handleModeSelect = (mode) => {
     if (mode.unlocked) {
@@ -60,49 +124,61 @@ export default function ModeSelectorModal({ visible, onClose, onSelectMode, play
   return (
     <Modal
       visible={visible}
-      transparent
+      transparent={true}
       animationType="fade"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.modalContainer} onPress={(e) => e.stopPropagation()}>
+      <View style={[styles.overlay, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <View style={styles.container}>
+          {/* HEADER */}
           <Text style={styles.title}>Select Game Mode</Text>
           
-          <View style={styles.modesContainer}>
-            {modes.map((mode) => (
-              <TouchableOpacity
+          {/* GAME MODE BUTTONS - RESTORED */}
+          <ScrollView 
+            style={styles.modesContainer}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* VISUAL UPGRADE: Mode cards with micro-animations */}
+            {modes.map((mode, index) => (
+              <Animated.View
                 key={mode.id}
-                style={[
-                  styles.modeButton,
-                  !mode.unlocked && styles.modeButtonLocked,
-                ]}
-                onPress={() => handleModeSelect(mode)}
-                disabled={!mode.unlocked}
-                activeOpacity={0.8}
+                style={{
+                  transform: [{ scale: modeAnims[index].scale }],
+                }}
               >
-                <Text style={[styles.modeIcon, { color: mode.color }]}>
-                  {mode.icon}
-                </Text>
-                <Text style={styles.modeName}>{mode.name}</Text>
-                <Text style={styles.modeDescription}>{mode.description}</Text>
-                {!mode.unlocked && (
-                  <Text style={styles.lockText}>
-                    Unlock at Level {mode.unlockLevel}
-                  </Text>
-                )}
-              </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.modeButton, { borderColor: mode.color }]}
+                  onPress={() => handleModeSelect(mode)}
+                  activeOpacity={0.8}
+                >
+                  <Animated.View
+                    style={[
+                      styles.modeGlow,
+                      {
+                        backgroundColor: `${mode.color}20`,
+                        opacity: modeAnims[index].glow,
+                      },
+                    ]}
+                  />
+                  <Text style={styles.modeIcon}>{mode.icon}</Text>
+                  <Text style={[styles.modeName, { color: mode.color }]}>{mode.name}</Text>
+                  <Text style={styles.modeDesc}>{mode.description}</Text>
+                </TouchableOpacity>
+              </Animated.View>
             ))}
-          </View>
+          </ScrollView>
 
-          <TouchableOpacity
-            style={styles.closeButton}
+          {/* CANCEL BUTTON */}
+          <TouchableOpacity 
+            style={styles.cancelButton} 
             onPress={onClose}
             activeOpacity={0.8}
           >
-            <Text style={styles.closeButtonText}>Cancel</Text>
+            <Text style={styles.cancelText}>Cancel</Text>
           </TouchableOpacity>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -113,84 +189,76 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
-  modalContainer: {
-    backgroundColor: '#2C3E50',
-    borderRadius: 20,
-    padding: 30,
-    width: '85%',
+  container: {
+    backgroundColor: '#16213e',
+    borderRadius: 24,
+    width: '100%',
     maxWidth: 400,
-    shadowColor: '#4ECDC4',
-    shadowOpacity: 0.5,
-    shadowRadius: 40,
-    elevation: 20,
+    maxHeight: '85%',
+    borderWidth: 2,
+    borderColor: '#4dd0e1',
+    overflow: 'hidden',
   },
   title: {
-    color: '#4ECDC4',
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: 'bold',
+    color: '#4dd0e1',
     textAlign: 'center',
-    marginBottom: 25,
-    textShadowColor: '#4ECDC4',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 20,
+    paddingVertical: 24,
+    backgroundColor: '#0f1419',
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
   },
   modesContainer: {
-    gap: 15,
-    marginBottom: 20,
+    maxHeight: 400, // CRITICAL FIX: Set explicit max height so ScrollView works
+  },
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
   },
   modeButton: {
-    backgroundColor: 'rgba(78, 205, 196, 0.1)',
-    borderWidth: 2,
-    borderColor: '#4ECDC4',
-    borderRadius: 15,
+    backgroundColor: 'rgba(10, 15, 26, 0.8)', // VISUAL UPGRADE: Increased contrast
+    borderRadius: 16, // VISUAL UPGRADE: Normalized border radius
     padding: 20,
+    marginBottom: 16, // VISUAL UPGRADE: Increased spacing
+    borderWidth: 2,
     alignItems: 'center',
-    shadowColor: '#4ECDC4',
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 5,
+    overflow: 'hidden',
+    position: 'relative',
   },
-  modeButtonLocked: {
-    opacity: 0.5,
-    borderColor: '#7F8C8D',
+  modeGlow: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+    borderRadius: 14,
   },
   modeIcon: {
-    fontSize: 40,
-    marginBottom: 10,
+    fontSize: 36,
+    marginBottom: 8,
   },
   modeName: {
-    color: '#ECF0F1',
     fontSize: 20,
     fontWeight: 'bold',
-    marginBottom: 5,
+    marginBottom: 6,
+    // VISUAL UPGRADE: Color set dynamically from mode color
   },
-  modeDescription: {
-    color: '#BDC3C7',
-    fontSize: 14,
+  modeDesc: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.85)', // VISUAL UPGRADE: Increased contrast
     textAlign: 'center',
-    marginBottom: 5,
   },
-  lockText: {
-    color: '#FFD93D',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 5,
-  },
-  closeButton: {
-    backgroundColor: 'transparent',
-    borderWidth: 2,
-    borderColor: '#7F8C8D',
-    paddingVertical: 12,
-    borderRadius: 10,
+  cancelButton: {
+    backgroundColor: 'rgba(150, 150, 170, 0.3)',
+    paddingVertical: 16,
+    margin: 16,
+    borderRadius: 12,
     alignItems: 'center',
-    marginTop: 10,
   },
-  closeButtonText: {
-    color: '#7F8C8D',
-    fontSize: 16,
+  cancelText: {
+    fontSize: 17,
+    color: '#ffffff',
     fontWeight: '600',
   },
 });
-
-

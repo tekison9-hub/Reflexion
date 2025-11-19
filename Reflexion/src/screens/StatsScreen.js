@@ -4,15 +4,15 @@
  * Major value-add feature for market sale ($2,000-$3,000)
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
-  StyleSheet,
-  Dimensions,
-} from 'react';
+} from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,11 +20,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLevelFromXP } from '../utils/GameLogic';
 import soundManager from '../services/SoundManager';
 import theme from '../styles/theme';
+import { useGlobalState } from '../contexts/GlobalStateContext';
 
 const { TYPOGRAPHY } = theme;
-const { width } = Dimensions.get('window');
 
-export default function StatsScreen({ navigation, playerData }) {
+export default function StatsScreen({ navigation }) {
+  // 🔴 FIX #2: Use GlobalStateContext for player data
+  const { playerData, loadPlayerData } = useGlobalState();
+  
   const [stats, setStats] = useState({
     gamesPlayed: 0,
     highScoreClassic: 0,
@@ -39,36 +42,103 @@ export default function StatsScreen({ navigation, playerData }) {
     perfectGames: 0,
     totalTaps: 0,
   });
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadStats();
-  }, []);
+  // 🔴 FIX #2: Reload data every time screen is focused (FIXED: No infinite loop)
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+      let mounted = true;
+      
+      const loadStats = async () => {
+        try {
+          if (!mounted) return;
+          setLoading(true);
+          
+          // CRITICAL: Reload player data from GlobalStateContext first (if available)
+          if (loadPlayerData && typeof loadPlayerData === 'function') {
+            try {
+              await loadPlayerData();
+            } catch (loadError) {
+              console.warn('⚠️ Failed to reload player data:', loadError);
+            }
+          }
+          
+          // Get fresh data directly from AsyncStorage (same source as Main Menu)
+          const STORAGE_KEY = '@reflexion_player_data';
+          const playerDataRaw = await AsyncStorage.getItem(STORAGE_KEY);
+          let currentPlayerData = {};
+          
+          if (playerDataRaw) {
+            try {
+              currentPlayerData = JSON.parse(playerDataRaw);
+            } catch (parseError) {
+              console.error('❌ Failed to parse player data:', parseError);
+              currentPlayerData = {}; // Use empty defaults on parse error
+            }
+          } else {
+            // If storage is empty, use empty defaults (shouldn't happen in normal flow)
+            console.warn('⚠️ No player data found in storage');
+            currentPlayerData = {};
+          }
+          
+          // Load comprehensive stats from AsyncStorage
+          const statsData = await AsyncStorage.getItem('@player_stats');
+          let parsedStats = {};
+          
+          if (statsData) {
+            try {
+              parsedStats = JSON.parse(statsData);
+            } catch (parseError) {
+              console.error('❌ Failed to parse stats data:', parseError);
+            }
+          }
 
-  const loadStats = async () => {
-    try {
-      // Load comprehensive stats from AsyncStorage
-      const statsData = await AsyncStorage.getItem('@player_stats');
-      const parsedStats = statsData ? JSON.parse(statsData) : {};
-
-      // Merge with playerData for real-time updates
-      setStats({
-        gamesPlayed: playerData?.gamesPlayed || parsedStats.gamesPlayed || 0,
-        highScoreClassic: parsedStats.highScoreClassic || 0,
-        highScoreRush: parsedStats.highScoreRush || 0,
-        highScoreZen: parsedStats.highScoreZen || 0,
-        totalXP: playerData?.xp || 0,
-        fastestReaction: parsedStats.fastestReaction || 0,
-        totalPlaytime: parsedStats.totalPlaytime || 0,
-        averageAccuracy: parsedStats.averageAccuracy || 0,
-        totalCoins: playerData?.coins || 0,
-        maxCombo: playerData?.maxCombo || parsedStats.maxCombo || 0,
-        perfectGames: parsedStats.perfectGames || 0,
-        totalTaps: parsedStats.totalTaps || 0,
-      });
-    } catch (error) {
-      console.error('Error loading stats:', error);
-    }
-  };
+          // CRITICAL FIX: Use totalXp (source of truth) instead of xp
+          const totalXP = currentPlayerData?.totalXp ?? currentPlayerData?.xp ?? 0;
+          
+          if (isActive && mounted) {
+            console.log('📊 Stats Screen - Loaded:', {
+              totalXP,
+              level: getLevelFromXP(totalXP),
+              coins: currentPlayerData?.coins || 0,
+              gamesPlayed: parsedStats.gamesPlayed || 0,
+            });
+            
+            setStats({
+              gamesPlayed: parsedStats.gamesPlayed || currentPlayerData?.gamesPlayed || 0,
+              highScoreClassic: parsedStats.highScoreClassic || 0,
+              highScoreRush: parsedStats.highScoreRush || 0,
+              highScoreZen: parsedStats.highScoreZen || 0,
+              totalXP: totalXP, // Use totalXp (source of truth)
+              fastestReaction: parsedStats.fastestReaction || 0,
+              totalPlaytime: parsedStats.totalPlaytime || 0,
+              averageAccuracy: parsedStats.averageAccuracy || 0,
+              totalCoins: currentPlayerData?.coins || 0,
+              maxCombo: parsedStats.maxCombo || currentPlayerData?.maxCombo || 0,
+              perfectGames: parsedStats.perfectGames || 0,
+              totalTaps: parsedStats.totalTaps || 0,
+            });
+            
+            setLoading(false);
+          }
+        } catch (error) {
+          console.error('❌ Failed to load stats:', error);
+          if (isActive && mounted) {
+            setLoading(false);
+          }
+        }
+      };
+      
+      loadStats();
+      
+      return () => {
+        isActive = false;
+        mounted = false;
+        setLoading(false); // Ensure loading is cleared on unmount
+      };
+    }, []) // Empty deps - only run when screen is focused, not when playerData changes
+  );
 
   const formatTime = (seconds) => {
     const hours = Math.floor(seconds / 3600);
@@ -100,6 +170,27 @@ export default function StatsScreen({ navigation, playerData }) {
     soundManager.play('tap');
     navigation.goBack();
   };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <LinearGradient colors={['#1a1a2e', '#16213e']} style={styles.background}>
+          <View style={styles.header}>
+            <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color="#FFF" />
+            </TouchableOpacity>
+            <Text style={[styles.headerTitle, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>
+              📊 Player Stats
+            </Text>
+            <View style={styles.placeholder} />
+          </View>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <Text style={{ color: '#FFF', fontSize: 16 }}>Loading...</Text>
+          </View>
+        </LinearGradient>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -259,7 +350,7 @@ export default function StatsScreen({ navigation, playerData }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   container: {
     flex: 1,
     backgroundColor: '#0f1419',
@@ -378,7 +469,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   statCard: {
-    width: (width - 60) / 2,
+    width: '48%', // sabit yüzde, Dimensions yok
     backgroundColor: 'rgba(26, 26, 46, 0.6)',
     borderRadius: 12,
     padding: 15,
@@ -433,4 +524,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
+
 

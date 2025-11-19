@@ -134,9 +134,16 @@ export const GAME_CONSTANTS = {
     SPEED_TEST: 1,
   },
   
-  SPEED_TEST_TRIALS: 25,
-  SPEED_TEST_MIN_DELAY: 800,
-  SPEED_TEST_MAX_DELAY: 1800,
+  // ✅ TASK 1: Speed Test (Time-Attack Mode) Constants
+  SPEED_TOTAL_TARGETS: 50, // Default total targets (can be overridden)
+  SPEED_TEST_RESULTS_FREEZE_MS: 400, // UI freeze duration after completion
+  SPEED_TEST_TARGET_COUNTS: [20, 30, 40, 50], // Available target counts
+  SPEED_TEST_UNLOCK_LEVELS: {
+    20: 1,  // Level 1: Unlock 20 targets
+    30: 5,  // Level 5: Unlock 30 targets
+    40: 10, // Level 10: Unlock 40 targets
+    50: 15, // Level 15: Unlock 50 targets
+  },
 };
 
 /**
@@ -151,64 +158,61 @@ export const GAME_CONSTANTS = {
  * Goal: 5-6 full games per level (balanced long-term progression)
  */
 
-// CRITICAL FIX: Easy first levels, exponential after level 5
-// Base XP for first few levels (easy progression)
-const BASE_XP_EASY = 300; // Level 1 → 2
-const XP_LEVEL_2_TO_3 = 500;
-const XP_LEVEL_3_TO_4 = 800;
-const XP_LEVEL_4_TO_5 = 1200;
-const XP_LEVEL_5_TO_6 = 1500;
-const XP_EXPONENTIAL_BASE = 1500; // Base for exponential after level 5
-const XP_EXPONENTIAL_MULTIPLIER = 1.15; // 15% increase per level after level 5
+// 🔴 FIX #1: REBALANCED LEVEL THRESHOLDS
+// Balanced progression: Takes 50-100 games to reach Level 10
+const LEVEL_THRESHOLDS_ARRAY = [
+  0,      // Level 1: 0 XP
+  100,    // Level 2: 100 XP
+  250,    // Level 3: 250 XP  
+  450,    // Level 4: 450 XP
+  700,    // Level 5: 700 XP
+  1000,   // Level 6: 1000 XP
+  1400,   // Level 7: 1400 XP
+  1900,   // Level 8: 1900 XP
+  2500,   // Level 9: 2500 XP
+  3200,   // Level 10: 3200 XP
+  4000,   // Level 11: 4000 XP
+  5000,   // Level 12: 5000 XP
+  6200,   // Level 13: 6200 XP
+  7600,   // Level 14: 7600 XP
+  9200,   // Level 15: 9200 XP
+  11000,  // Level 16: 11000 XP
+  13000,  // Level 17: 13000 XP
+  15500,  // Level 18: 15500 XP
+  18500,  // Level 19: 18500 XP
+  22000,  // Level 20: 22000 XP
+];
+
+// Extend beyond level 20 with +5000 XP per level
+for (let i = 21; i <= 100; i++) {
+  LEVEL_THRESHOLDS_ARRAY.push(22000 + (i - 20) * 5000);
+}
 
 /**
  * Calculate cumulative XP needed to reach a specific level
- * CRITICAL FIX: Easy first levels, exponential after level 5
+ * NEW FORMULA: Balanced linear progression
  * @param {number} level - Target level (1-indexed)
  * @returns {number} Total XP required to reach this level
  */
 export function calculateXPNeeded(level) {
   if (level <= 1) return 0;
-  
-  // Easy progression for first 5 levels
-  if (level === 2) return BASE_XP_EASY; // 300 XP
-  if (level === 3) return BASE_XP_EASY + XP_LEVEL_2_TO_3; // 800 XP total
-  if (level === 4) return BASE_XP_EASY + XP_LEVEL_2_TO_3 + XP_LEVEL_3_TO_4; // 1600 XP total
-  if (level === 5) return BASE_XP_EASY + XP_LEVEL_2_TO_3 + XP_LEVEL_3_TO_4 + XP_LEVEL_4_TO_5; // 2800 XP total
-  if (level === 6) return BASE_XP_EASY + XP_LEVEL_2_TO_3 + XP_LEVEL_3_TO_4 + XP_LEVEL_4_TO_5 + XP_LEVEL_5_TO_6; // 4300 XP total
-  
-  // Exponential progression after level 5
-  let totalXP = BASE_XP_EASY + XP_LEVEL_2_TO_3 + XP_LEVEL_3_TO_4 + XP_LEVEL_4_TO_5 + XP_LEVEL_5_TO_6;
-  
-  for (let i = 6; i < level; i++) {
-    const levelIndex = i - 5; // Level 6 = index 1, Level 7 = index 2, etc.
-    const xpForLevel = XP_EXPONENTIAL_BASE * Math.pow(XP_EXPONENTIAL_MULTIPLIER, levelIndex);
-    totalXP += Math.floor(xpForLevel);
+  if (level <= LEVEL_THRESHOLDS_ARRAY.length) {
+    return LEVEL_THRESHOLDS_ARRAY[level - 1];
   }
-  
-  return totalXP;
+  // Beyond level 100: +5000 XP per level
+  return LEVEL_THRESHOLDS_ARRAY[LEVEL_THRESHOLDS_ARRAY.length - 1] + (level - LEVEL_THRESHOLDS_ARRAY.length) * 5000;
 }
 
 /**
  * Get XP needed for next level from current level
- * CRITICAL FIX: Easy first levels, exponential after level 5
  * @param {number} currentLevel - Current player level
  * @returns {number} XP needed to reach next level
  */
 export function getXPForNextLevel(currentLevel) {
-  if (currentLevel < 1) return BASE_XP_EASY;
-  
-  // Easy progression for first 5 levels
-  if (currentLevel === 1) return BASE_XP_EASY; // 300 XP
-  if (currentLevel === 2) return XP_LEVEL_2_TO_3; // 500 XP
-  if (currentLevel === 3) return XP_LEVEL_3_TO_4; // 800 XP
-  if (currentLevel === 4) return XP_LEVEL_4_TO_5; // 1200 XP
-  if (currentLevel === 5) return XP_LEVEL_5_TO_6; // 1500 XP
-  
-  // Exponential progression after level 5
-  const levelIndex = currentLevel - 5; // Level 6 = index 1, Level 7 = index 2, etc.
-  const xpForLevel = XP_EXPONENTIAL_BASE * Math.pow(XP_EXPONENTIAL_MULTIPLIER, levelIndex);
-  return Math.floor(xpForLevel);
+  if (currentLevel < 1) return 100;
+  const currentThreshold = calculateXPNeeded(currentLevel);
+  const nextThreshold = calculateXPNeeded(currentLevel + 1);
+  return nextThreshold - currentThreshold;
 }
 
 // Pre-calculate thresholds for first 100 levels for performance
@@ -216,8 +220,41 @@ export const LEVEL_THRESHOLDS = Array.from({ length: 101 }, (_, i) =>
   calculateXPNeeded(i + 1)
 );
 
+/**
+ * Get player progress object (single source of truth)
+ * @param {number} totalXP - Current total XP
+ * @returns {object} { level, currentXp, xpToNextLevel, totalXp }
+ */
+export function getPlayerProgress(totalXP) {
+  // CRITICAL FIX: Validate input parameter (safe access)
+  const safeTotalXP = typeof totalXP === 'number' && !isNaN(totalXP) ? Math.max(0, totalXP) : 0;
+  
+  try {
+    const level = getLevelFromXP(safeTotalXP);
+    const xpForCurrentLevel = calculateXPNeeded(level);
+    const xpToNextLevel = getXPForNextLevel(level);
+    const currentXp = safeTotalXP - xpForCurrentLevel;
+    
+    return {
+      level: Math.max(1, level),
+      currentXp: Math.max(0, currentXp),
+      xpToNextLevel: Math.max(100, xpToNextLevel),
+      totalXp: safeTotalXP, // CRITICAL: Always return totalXp
+    };
+  } catch (error) {
+    console.error('❌ CRITICAL: Error in getPlayerProgress:', error);
+    // Return safe defaults
+    return {
+      level: 1,
+      currentXp: 0,
+      xpToNextLevel: 100,
+      totalXp: safeTotalXP,
+    };
+  }
+}
+
 // Log progression curve for debugging
-console.log('📊 Reflexion v5.0 XP Curve:', {
+console.log('📊 Reflexion - REBALANCED XP Curve:', {
   'Level 2': calculateXPNeeded(2) + ' XP (need ' + getXPForNextLevel(1) + ')',
   'Level 3': calculateXPNeeded(3) + ' XP (need ' + getXPForNextLevel(2) + ')',
   'Level 5': calculateXPNeeded(5) + ' XP (need ' + getXPForNextLevel(4) + ')',
@@ -227,9 +264,9 @@ console.log('📊 Reflexion v5.0 XP Curve:', {
 
 // ELITE v3.0: Danger Point System Configuration
 export const DANGER_CONFIG = {
-  MIN_LEVEL: 5, // Start spawning danger points at level 5
-  BASE_CHANCE: 0.03, // 3% base spawn rate
-  CHANCE_PER_LEVEL: 0.005, // +0.5% per level
+  MIN_LEVEL: 1, // CRITICAL FIX: Start spawning danger points at level 1
+  BASE_CHANCE: 0.05, // 5% base spawn rate
+  CHANCE_PER_LEVEL: 0.01, // +1% per level (was 0.5%)
   MAX_CHANCE: 0.25, // Cap at 25%
   LIFETIME_MULTIPLIER: 0.7, // Danger points disappear 30% faster
   COLOR: '#FF3B3B', // Vibrant red
@@ -257,15 +294,20 @@ export const POWERUP_CONFIG = {
  * @returns {boolean} - Should spawn danger point
  */
 export function shouldSpawnDangerPoint(playerLevel, gameMode) {
-  // Only in Rush mode and after level 5
-  if (gameMode !== GAME_MODES.RUSH || playerLevel < DANGER_CONFIG.MIN_LEVEL) {
+  // BUG #7 FIX: Only in Rush mode (NOT in Zen or Speed Test)
+  if (gameMode !== GAME_MODES.RUSH || gameMode === GAME_MODES.ZEN || gameMode === GAME_MODES.SPEED_TEST || playerLevel < DANGER_CONFIG.MIN_LEVEL) {
     return false;
   }
   
-  // Calculate spawn chance based on level
+  // BUG #7 FIX: Spawn probability: baseChance = 10% + (level * 5%)
+  // Level 1: 10% + (1 * 5%) = 15%
+  // Level 5: 10% + (5 * 5%) = 35%
+  // Level 10: 10% + (10 * 5%) = 60% (capped at 40%)
+  const baseChance = 0.10; // BUG #7 FIX: 10% base (was 5%)
+  const chancePerLevel = 0.05; // BUG #7 FIX: 5% per level (was 1%)
   const chance = Math.min(
-    DANGER_CONFIG.BASE_CHANCE + (playerLevel - DANGER_CONFIG.MIN_LEVEL) * DANGER_CONFIG.CHANCE_PER_LEVEL,
-    DANGER_CONFIG.MAX_CHANCE
+    baseChance + (playerLevel * chancePerLevel),
+    0.40 // BUG #7 FIX: Cap at 40% (was 25%)
   );
   
   return Math.random() < chance;
@@ -392,18 +434,42 @@ export function getGameDuration(gameMode) {
 }
 
 /**
- * Get target lifetime by mode
- * IMPROVED: Longer lifetimes for better tap windows
+ * Get target lifetime by mode and player level
+ * IMPROVED: Dynamic lifetime decreases as level increases (faster pacing)
+ * Minimum lifetime: 350ms (prevents impossible gameplay)
+ * @param {string} gameMode - Current game mode
+ * @param {number} playerLevel - Current player level (default: 1)
+ * @returns {number} Target lifetime in milliseconds
  */
-export function getTargetLifetime(gameMode) {
+export function getTargetLifetime(gameMode, playerLevel = 1) {
+  // Base lifetime by mode
+  let baseLifetime;
   switch (gameMode) {
     case GAME_MODES.RUSH:
-      return GAME_CONSTANTS.RUSH_TARGET_LIFETIME;
+      baseLifetime = GAME_CONSTANTS.RUSH_TARGET_LIFETIME;
+      break;
     case GAME_MODES.ZEN:
-      return GAME_CONSTANTS.ZEN_TARGET_LIFETIME;
+      baseLifetime = GAME_CONSTANTS.ZEN_TARGET_LIFETIME;
+      break;
+    case GAME_MODES.SPEED_TEST:
+      baseLifetime = 2000; // Speed Test uses fixed lifetime
+      return baseLifetime;
     default:
-      return GAME_CONSTANTS.CLASSIC_TARGET_LIFETIME;
+      baseLifetime = GAME_CONSTANTS.CLASSIC_TARGET_LIFETIME;
   }
+  
+  // CRITICAL FIX: Decrease lifetime as level increases
+  // Formula: baseLifetime - (level - 1) * reductionPerLevel
+  // Level 1: 100% of base lifetime
+  // Level 10: ~70% of base lifetime
+  // Level 20: ~50% of base lifetime
+  const reductionPerLevel = baseLifetime * 0.015; // 1.5% reduction per level
+  const lifetimeReduction = (playerLevel - 1) * reductionPerLevel;
+  const adjustedLifetime = baseLifetime - lifetimeReduction;
+  
+  // Enforce minimum lifetime (350ms)
+  const MIN_LIFETIME = 350;
+  return Math.max(MIN_LIFETIME, Math.floor(adjustedLifetime));
 }
 
 /**
@@ -416,7 +482,29 @@ export function getTargetLifetime(gameMode) {
  * @param {number} playerLevel - Player level for special target spawning
  * @returns {object} Target object with all properties
  */
-export function generateTarget(width, height, difficulty, gameMode, theme, playerLevel = 1, ballEmoji = '⚪') {
+/**
+ * Check if a position overlaps with existing targets
+ * @param {number} x - X position
+ * @param {number} y - Y position
+ * @param {number} size - Target size
+ * @param {Array} existingTargets - Array of existing target objects
+ * @param {number} minDistance - Minimum distance between targets (default: 1.5x size)
+ * @returns {boolean} - True if position overlaps
+ */
+function isPositionOverlapping(x, y, size, existingTargets, minDistance = 1.5) {
+  const minDist = size * minDistance;
+  for (const target of existingTargets) {
+    const dx = x - target.x;
+    const dy = y - target.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance < minDist) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function generateTarget(width, height, difficulty, gameMode, theme, playerLevel = 1, ballEmoji = '⚪', existingTargets = []) {
   const sizeReduction = (difficulty - 1) * GAME_CONSTANTS.DIFFICULTY_SIZE_DECREASE;
   const baseSize = GAME_CONSTANTS.TARGET_BASE_SIZE;
   const size = Math.max(
@@ -429,8 +517,23 @@ export function generateTarget(width, height, difficulty, gameMode, theme, playe
   const isLucky = !isDanger && !isPowerUp && Math.random() < GAME_CONSTANTS.LUCKY_TAP_CHANCE;
   
   const padding = size / 2 + 10;
-  const x = padding + Math.random() * (width - size - padding * 2);
-  const y = padding + Math.random() * (height - size - padding * 2);
+  
+  // CRITICAL FIX: Prevent target overlap in Rush mode (and other modes)
+  // Try up to 20 times to find a non-overlapping position
+  let x, y;
+  let attempts = 0;
+  const maxAttempts = 20;
+  
+  do {
+    x = padding + Math.random() * (width - size - padding * 2);
+    y = padding + Math.random() * (height - size - padding * 2);
+    attempts++;
+    
+    // If we've tried too many times, use the position anyway (prevents infinite loop)
+    if (attempts >= maxAttempts) {
+      break;
+    }
+  } while (isPositionOverlapping(x, y, size, existingTargets, gameMode === GAME_MODES.RUSH ? 1.5 : 1.2));
   
   let color;
   if (isDanger) {
@@ -440,6 +543,19 @@ export function generateTarget(width, height, difficulty, gameMode, theme, playe
   } else {
     const colors = theme?.particleColors || ['#4ECDC4', '#C56CF0', '#FF6B9D'];
     color = colors[Math.floor(Math.random() * colors.length)];
+  }
+  
+  // 🔴 EMOJI FIX: Assign emoji based on target type with safe fallbacks
+  let emoji;
+  if (isDanger) {
+    emoji = '⚠️'; // Warning emoji for danger targets
+  } else if (isPowerUp) {
+    emoji = '💎'; // Diamond emoji for reward targets
+  } else if (isLucky) {
+    emoji = '⭐'; // Star emoji for lucky targets
+  } else {
+    // 🔴 SAFE_EMOJI_PATCH: Use safe fallback for ball emoji
+    emoji = ballEmoji ?? '⭕'; // Use ball emoji if provided, otherwise default circle
   }
   
   return {
@@ -452,7 +568,9 @@ export function generateTarget(width, height, difficulty, gameMode, theme, playe
     isDanger,
     isPowerUp,
     ballEmoji,
+    emoji, // 🔴 EMOJI FIX: Always include emoji property
     createdAt: Date.now(),
+    isProcessing: false, // 🔴 KRİTİK DÜZELTME: İşleniyor bayrağı - tap ses ve animasyon için
   };
 }
 
@@ -493,6 +611,59 @@ export function getThemeForLevel(level) {
   if (level >= 21) return THEMES.PULSE_CORE;
   if (level >= 11) return THEMES.CYBER_TUNNEL;
   if (level >= 6) return THEMES.HYPER_LANE;
+  return THEMES.NEON_CITY;
+}
+
+/**
+ * CRITICAL FIX: Get theme data by theme ID (for ThemeContext)
+ * @param {string} themeId - Theme ID (e.g., 'theme_default', 'neon_city', etc.)
+ * @returns {object} Theme object
+ */
+export function getThemeData(themeId) {
+  if (!themeId) return THEMES.NEON_CITY;
+  
+  // 🔴 BUG #1 FIX: Complete theme ID mapping (handles both 'theme_neon_city' and 'neon_city' formats)
+  // Map shop theme IDs (with 'theme_' prefix) to GameLogic THEMES
+  const themeMap = {
+    'theme_default': THEMES.NEON_CITY,
+    'theme_neon_city': THEMES.NEON_CITY,
+    'theme_hyper_lane': THEMES.HYPER_LANE,
+    'theme_cyber_tunnel': THEMES.CYBER_TUNNEL,
+    'theme_pulse_core': THEMES.PULSE_CORE,
+    'theme_quantum_storm': THEMES.QUANTUM_STORM,
+    // Also support without prefix (for backward compatibility)
+    'neon_city': THEMES.NEON_CITY,
+    'hyper_lane': THEMES.HYPER_LANE,
+    'cyber_tunnel': THEMES.CYBER_TUNNEL,
+    'pulse_core': THEMES.PULSE_CORE,
+    'quantum_storm': THEMES.QUANTUM_STORM,
+    // Map shop theme IDs that don't exist in THEMES to closest match
+    'theme_ocean': THEMES.CYBER_TUNNEL, // Ocean -> Cyber Tunnel (blue theme)
+    'theme_sunset': THEMES.PULSE_CORE, // Sunset -> Pulse Core (warm colors)
+    'theme_forest': THEMES.HYPER_LANE, // Forest -> Hyper Lane (green/purple)
+    'theme_space': THEMES.QUANTUM_STORM, // Space -> Quantum Storm (dark/cosmic)
+    'theme_volcano': THEMES.PULSE_CORE, // Volcano -> Pulse Core (red/pink)
+    'theme_ice': THEMES.CYBER_TUNNEL, // Ice -> Cyber Tunnel (blue/cyan)
+    'theme_matrix': THEMES.QUANTUM_STORM, // Matrix -> Quantum Storm (dark/green)
+    'theme_galaxy': THEMES.QUANTUM_STORM, // Galaxy -> Quantum Storm
+    'theme_gold': THEMES.PULSE_CORE, // Gold -> Pulse Core (yellow/gold)
+  };
+  
+  // Check if themeId matches any theme's id property
+  for (const themeKey in THEMES) {
+    if (THEMES[themeKey].id === themeId) {
+      return THEMES[themeKey];
+    }
+  }
+  
+  // Fallback to mapped theme or default
+  const mappedTheme = themeMap[themeId];
+  if (mappedTheme) {
+    console.log(`🎨 Theme mapped: ${themeId} → ${mappedTheme.name}`);
+    return mappedTheme;
+  }
+  
+  console.warn(`⚠️ Unknown theme ID: ${themeId}, using default`);
   return THEMES.NEON_CITY;
 }
 
@@ -553,14 +724,7 @@ export function getModeUnlockLevel(mode) {
  * @returns {number} - Total XP required to reach that level
  */
 export function getXPRequired(level) {
-  if (level <= 0) return 0;
-  if (level <= LEVEL_THRESHOLDS.length) {
-    return LEVEL_THRESHOLDS[level - 1];
-  }
-  // Beyond level 30: +1500 XP per level
-  const lastThreshold = LEVEL_THRESHOLDS[LEVEL_THRESHOLDS.length - 1];
-  const levelsAbove = level - LEVEL_THRESHOLDS.length;
-  return lastThreshold + (levelsAbove * 1500);
+  return calculateXPNeeded(level);
 }
 
 // Removed duplicate - using v5.0 implementation at line 186
@@ -571,13 +735,21 @@ export function getXPRequired(level) {
  * @returns {number} - Current level
  */
 export function getLevelFromXP(totalXP) {
-  // Find the highest level where XP >= threshold
-  for (let level = LEVEL_THRESHOLDS.length; level >= 1; level--) {
-    if (totalXP >= getXPRequired(level)) {
-      return level;
+  // CRITICAL FIX: Validate input parameter (safe access)
+  const safeTotalXP = typeof totalXP === 'number' && !isNaN(totalXP) ? Math.max(0, totalXP) : 0;
+  
+  try {
+    // Find the highest level where XP >= threshold
+    for (let level = LEVEL_THRESHOLDS.length; level >= 1; level--) {
+      if (safeTotalXP >= getXPRequired(level)) {
+        return level;
+      }
     }
+    return 1; // Minimum level
+  } catch (error) {
+    console.error('❌ CRITICAL: Error in getLevelFromXP:', error);
+    return 1; // Safe fallback
   }
-  return 1; // Minimum level
 }
 
 /**
@@ -724,7 +896,86 @@ export default {
   addXP,
   getXPProgress,
   calculateXPNeeded,
+  getPlayerProgress,
+  getThemeData,
   shouldSpawnDangerPoint,
   shouldSpawnPowerUp, // ELITE v3.0
   calculateComboBonusXP,
+  // ✅ TASK 1: Speed Test (Time-Attack Mode) Helpers
+  getSpeedTestSpawnCount,
+  calculateSpeedTestRank,
+  formatTime,
+  isSpeedTestTargetCountUnlocked,
+  getSpeedTestTargetCountUnlockLevel,
+  getAvailableSpeedTestTargetCounts,
 };
+
+/**
+ * ✅ TASK 1: Speed Test (Time-Attack Mode) Helper Functions
+ * Modular helpers for professional time-attack gameplay
+ */
+
+/**
+ * Check if a Speed Test target count is unlocked for the player
+ * @param {number} targetCount - Target count to check (20, 30, 40, or 50)
+ * @param {number} playerLevel - Current player level
+ * @returns {boolean} Whether the target count is unlocked
+ */
+export function isSpeedTestTargetCountUnlocked(targetCount, playerLevel) {
+  const unlockLevel = GAME_CONSTANTS.SPEED_TEST_UNLOCK_LEVELS[targetCount];
+  return unlockLevel !== undefined && playerLevel >= unlockLevel;
+}
+
+/**
+ * Get unlock level for a Speed Test target count
+ * @param {number} targetCount - Target count (20, 30, 40, or 50)
+ * @returns {number} Required level to unlock, or null if invalid
+ */
+export function getSpeedTestTargetCountUnlockLevel(targetCount) {
+  return GAME_CONSTANTS.SPEED_TEST_UNLOCK_LEVELS[targetCount] || null;
+}
+
+/**
+ * Get available Speed Test target counts for the player
+ * @param {number} playerLevel - Current player level
+ * @returns {Array<number>} Array of unlocked target counts
+ */
+export function getAvailableSpeedTestTargetCounts(playerLevel) {
+  return GAME_CONSTANTS.SPEED_TEST_TARGET_COUNTS.filter(count => 
+    isSpeedTestTargetCountUnlocked(count, playerLevel)
+  );
+}
+
+/**
+ * Calculate how many targets should spawn simultaneously based on remaining targets
+ * @param {number} remaining - Number of targets remaining to complete
+ * @returns {number} Number of targets to spawn (1-5)
+ */
+export function getSpeedTestSpawnCount(remaining) {
+  if (remaining > 35) return Math.floor(Math.random() * 2) + 1; // 1-2 targets
+  if (remaining > 20) return Math.floor(Math.random() * 2) + 2; // 2-3 targets
+  if (remaining > 10) return Math.floor(Math.random() * 2) + 3; // 3-4 targets
+  return Math.floor(Math.random() * 2) + 4; // 4-5 targets
+}
+
+/**
+ * Calculate rank tier based on completion time
+ * @param {number} finalTimeMs - Total time in milliseconds
+ * @returns {string} Rank tier (S/A/B/C)
+ */
+export function calculateSpeedTestRank(finalTimeMs) {
+  const timeSeconds = finalTimeMs / 1000;
+  if (timeSeconds < 15) return 'S'; // Elite: < 15s
+  if (timeSeconds < 20) return 'A'; // Excellent: < 20s
+  if (timeSeconds < 30) return 'B'; // Good: < 30s
+  return 'C'; // Average: >= 30s
+}
+
+/**
+ * Format time in milliseconds to readable string (3 decimals)
+ * @param {number} timeMs - Time in milliseconds
+ * @returns {string} Formatted time string (e.g., "12.345")
+ */
+export function formatTime(timeMs) {
+  return (timeMs / 1000).toFixed(3);
+}

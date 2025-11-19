@@ -4,8 +4,9 @@
  */
 
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -78,7 +79,7 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   container: {
     flex: 1,
     backgroundColor: '#1a1a2e',

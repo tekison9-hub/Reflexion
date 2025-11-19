@@ -20,6 +20,7 @@ export const SHOP_ITEMS = {
       price: 0,
       unlocked: true,
       level: 1,
+      emoji: '🌑',
       colors: {
         background: ['#1a1a2e', '#16213e', '#0f3460'],
         primary: '#00E5FF',
@@ -33,6 +34,7 @@ export const SHOP_ITEMS = {
       price: 500,
       unlocked: false,
       level: 5,
+      emoji: '🌃',
       colors: {
         background: ['#0a0e27', '#1a1f4d', '#2d3561'],
         primary: '#FF1744',
@@ -46,6 +48,7 @@ export const SHOP_ITEMS = {
       price: 800,
       unlocked: false,
       level: 8,
+      emoji: '🌊',
       colors: {
         background: ['#001f3f', '#003d7a', '#0056a3'],
         primary: '#00CED1',
@@ -59,6 +62,7 @@ export const SHOP_ITEMS = {
       price: 700,
       unlocked: false,
       level: 10,
+      emoji: '🌅',
       colors: {
         background: ['#ff6b6b', '#ff8e53', '#ffd93d'],
         primary: '#FF4500',
@@ -72,6 +76,7 @@ export const SHOP_ITEMS = {
       price: 900,
       unlocked: false,
       level: 12,
+      emoji: '🌲',
       colors: {
         background: ['#1a3a1a', '#2d5a2d', '#407a40'],
         primary: '#90EE90',
@@ -85,6 +90,7 @@ export const SHOP_ITEMS = {
       price: 1200,
       unlocked: false,
       level: 15,
+      emoji: '🚀',
       colors: {
         background: ['#000000', '#0a0a2e', '#1a1a4e'],
         primary: '#FFFFFF',
@@ -98,6 +104,7 @@ export const SHOP_ITEMS = {
       price: 1500,
       unlocked: false,
       level: 18,
+      emoji: '🌋',
       colors: {
         background: ['#2d0a0a', '#4d1414', '#6d1e1e'],
         primary: '#FF4500',
@@ -111,6 +118,7 @@ export const SHOP_ITEMS = {
       price: 1400,
       unlocked: false,
       level: 20,
+      emoji: '❄️',
       colors: {
         background: ['#b8e6f5', '#87ceeb', '#4682b4'],
         primary: '#00CED1',
@@ -124,6 +132,7 @@ export const SHOP_ITEMS = {
       price: 1800,
       unlocked: false,
       level: 22,
+      emoji: '💚',
       colors: {
         background: ['#000000', '#001100', '#003300'],
         primary: '#00FF00',
@@ -137,6 +146,7 @@ export const SHOP_ITEMS = {
       price: 2000,
       unlocked: false,
       level: 25,
+      emoji: '🌌',
       colors: {
         background: ['#1a0033', '#33006b', '#4d00a3'],
         primary: '#FF00FF',
@@ -151,6 +161,7 @@ export const SHOP_ITEMS = {
       unlocked: false,
       level: 30,
       premium: true,
+      emoji: '👑',
       colors: {
         background: ['#1a1a00', '#332d00', '#4d4000'],
         primary: '#FFD700',

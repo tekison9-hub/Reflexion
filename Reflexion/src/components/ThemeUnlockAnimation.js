@@ -1,8 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
-  StyleSheet,
   Modal,
   Animated,
   Dimensions,
@@ -11,15 +10,13 @@ import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import soundManager from '../services/SoundManager';
 import theme from '../styles/theme';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 
 const { COLORS, GRADIENTS, TYPOGRAPHY, SPACING, BORDER_RADIUS } = theme;
 
-// CRITICAL FIX: Get screen width safely inside component, not at module level
-const getScreenWidth = () => Dimensions.get('window').width;
-
 /**
  * ThemeUnlockAnimation - Celebratory animation for theme unlocks
- * 
+ *
  * Features:
  * - Particle burst effect
  * - Theme name reveal with scale animation
@@ -29,9 +26,26 @@ const getScreenWidth = () => Dimensions.get('window').width;
  * - Auto-dismiss after 3 seconds
  */
 const ThemeUnlockAnimation = React.memo(({ visible, theme, onClose }) => {
+  const [screenWidth, setScreenWidth] = useState(
+    Dimensions.get('window')?.width ?? 320
+  );
+
+  // ✅ RUNTIME-SAFE: ekran genişliğini component içinde ve dinamik al
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener('change', ({ window }) => {
+      setScreenWidth(window.width);
+    });
+
+    return () => {
+      // RN 0.65+ için remove kontrolü
+      subscription?.remove?.();
+    };
+  }, []);
+
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const glowAnim = useRef(new Animated.Value(0)).current;
+
   const particles = useRef(
     Array.from({ length: 20 }, (_, i) => ({
       id: i,
@@ -44,26 +58,30 @@ const ThemeUnlockAnimation = React.memo(({ visible, theme, onClose }) => {
 
   useEffect(() => {
     if (visible && theme) {
-      // Play theme unlock sound
+      // Ses
       (async () => {
-        await soundManager.play('luckyTap'); // Theme unlock sound
+        try {
+          await soundManager.play('luckyTap');
+        } catch (e) {
+          // sessiz geç
+        }
       })();
 
-      // Haptic feedback - heavy impact
+      // Haptik
       try {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
       } catch (e) {
-        // Fail silently
+        // sessiz geç
       }
 
-      // Fade in overlay
+      // Overlay fade-in
       Animated.timing(fadeAnim, {
         toValue: 1,
         duration: 300,
         useNativeDriver: true,
       }).start();
 
-      // Scale in main content
+      // Ana içerik scale-in
       Animated.spring(scaleAnim, {
         toValue: 1,
         tension: 40,
@@ -88,7 +106,7 @@ const ThemeUnlockAnimation = React.memo(({ visible, theme, onClose }) => {
         ])
       ).start();
 
-      // Particle burst animation
+      // Parçacık patlaması
       const particleAnimations = particles.map((particle, index) => {
         const angle = (index / particles.length) * Math.PI * 2;
         const distance = 150 + Math.random() * 100;
@@ -129,7 +147,7 @@ const ThemeUnlockAnimation = React.memo(({ visible, theme, onClose }) => {
 
       Animated.parallel(particleAnimations).start();
 
-      // Auto-dismiss after 3 seconds
+      // 3 saniye sonra oto kapanış
       const timeout = setTimeout(() => {
         handleClose();
       }, 3000);
@@ -139,13 +157,24 @@ const ThemeUnlockAnimation = React.memo(({ visible, theme, onClose }) => {
         scaleAnim.setValue(0);
         fadeAnim.setValue(0);
         glowAnim.stopAnimation();
-        particles.forEach(p => {
+        particles.forEach((p) => {
           p.translateX.setValue(0);
           p.translateY.setValue(0);
           p.opacity.setValue(1);
           p.scale.setValue(1);
         });
       };
+    } else {
+      // görünür değilken state reset
+      scaleAnim.setValue(0);
+      fadeAnim.setValue(0);
+      glowAnim.setValue(0);
+      particles.forEach((p) => {
+        p.translateX.setValue(0);
+        p.translateY.setValue(0);
+        p.opacity.setValue(1);
+        p.scale.setValue(1);
+      });
     }
   }, [visible, theme]);
 
@@ -162,7 +191,7 @@ const ThemeUnlockAnimation = React.memo(({ visible, theme, onClose }) => {
         useNativeDriver: true,
       }),
     ]).start(() => {
-      onClose();
+      onClose && onClose();
     });
   };
 
@@ -207,6 +236,8 @@ const ThemeUnlockAnimation = React.memo(({ visible, theme, onClose }) => {
           style={[
             styles.container,
             {
+              width: screenWidth * 0.85,
+              maxWidth: 400,
               transform: [{ scale: scaleAnim }],
             },
           ]}
@@ -222,7 +253,7 @@ const ThemeUnlockAnimation = React.memo(({ visible, theme, onClose }) => {
           >
             <View style={styles.content}>
               <Text style={styles.unlockLabel}>THEME UNLOCKED</Text>
-              
+
               <Animated.View
                 style={[
                   styles.themeNameContainer,
@@ -261,7 +292,7 @@ const ThemeUnlockAnimation = React.memo(({ visible, theme, onClose }) => {
   );
 });
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.9)',
@@ -285,8 +316,7 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   container: {
-    width: getScreenWidth() * 0.85,
-    maxWidth: 400,
+    // width dinamik olarak component içinde veriliyor
   },
   gradientBorder: {
     padding: 4,
@@ -334,4 +364,3 @@ const styles = StyleSheet.create({
 ThemeUnlockAnimation.displayName = 'ThemeUnlockAnimation';
 
 export default ThemeUnlockAnimation;
-

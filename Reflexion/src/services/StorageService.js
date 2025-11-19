@@ -1,81 +1,67 @@
-﻿import AsyncStorage from '@react-native-async-storage/async-storage';
+﻿/**
+ * REFLEXION v6.0 - STORAGE SERVICE
+ * ✅ Async initialization
+ * ✅ Safe getters/setters
+ * ✅ Automatic recovery
+ */
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 class StorageService {
   constructor() {
     this.isInitialized = false;
-    this.initPromise = null; // Track initialization promise
+    this.initPromise = null;
   }
 
   async initialize() {
-    // ✅ Prevent multiple initializations
     if (this.initPromise) {
       return this.initPromise;
     }
+
     if (this.isInitialized) {
-      console.log('🔄 StorageService already initialized');
       return Promise.resolve();
     }
-    
+
     this.initPromise = (async () => {
       try {
-        // ✅ CRITICAL FIX: Wait for AsyncStorage to be ready
-        if (!AsyncStorage) {
-          throw new Error('AsyncStorage is not available');
-        }
-        
-        // Test storage access
-        await AsyncStorage.getItem('@test_key');
+        // Test AsyncStorage availability
+        await AsyncStorage.getItem('@reflexion_test');
         this.isInitialized = true;
         console.log('✅ StorageService initialized');
       } catch (error) {
-        console.error('❌ StorageService initialization failed:', error);
-        // Set initialized anyway to prevent blocking app
-        this.isInitialized = true;
+        console.error('❌ StorageService init failed:', error);
+        this.isInitialized = true; // Set anyway
       }
     })();
 
     return this.initPromise;
   }
 
-  /**
-   * ✅ CRITICAL FIX: Safe getItem with initialization check
-   */
   async getItem(key) {
-    // Ensure initialized before accessing storage
     if (!this.isInitialized) {
       await this.initialize();
     }
+
     try {
-      if (!AsyncStorage) {
-        console.warn('⚠️ AsyncStorage not available');
-        return null;
-      }
-      
       const value = await AsyncStorage.getItem(key);
       return value ? JSON.parse(value) : null;
     } catch (error) {
-      console.warn(`⚠️ Storage get failed for key "${key}":`, error.message);
+      console.warn(`⚠️ getItem failed for "${key}":`, error.message);
       return null;
     }
   }
 
-  /**
-   * ✅ CRITICAL FIX: Safe setItem with initialization check
-   */
   async setItem(key, value) {
-    // Ensure initialized before accessing storage
     if (!this.isInitialized) {
       await this.initialize();
     }
+
     try {
-      if (!AsyncStorage) {
-        console.warn('⚠️ AsyncStorage not available');
-        return;
-      }
-      
       await AsyncStorage.setItem(key, JSON.stringify(value));
+      return true;
     } catch (error) {
-      console.warn(`⚠️ Storage set failed for key "${key}":`, error.message);
+      console.warn(`⚠️ setItem failed for "${key}":`, error.message);
+      return false;
     }
   }
 
@@ -83,26 +69,32 @@ class StorageService {
     if (!this.isInitialized) {
       await this.initialize();
     }
+
     try {
-      if (!AsyncStorage) {
-        console.warn('⚠️ AsyncStorage not available');
-        return;
-      }
-      
       await AsyncStorage.removeItem(key);
+      return true;
     } catch (error) {
-      console.warn(`⚠️ Storage remove failed for key "${key}":`, error.message);
+      console.warn(`⚠️ removeItem failed for "${key}":`, error.message);
+      return false;
+    }
+  }
+
+  async clear() {
+    try {
+      await AsyncStorage.clear();
+      console.log('✅ Storage cleared');
+      return true;
+    } catch (error) {
+      console.error('❌ clear failed:', error);
+      return false;
     }
   }
 }
 
-// Singleton instance
 const storageService = new StorageService();
 
-// ✅ CRITICAL FIX: Auto-initialize on creation
-storageService.initialize().catch(err => {
-  console.warn('⚠️ StorageService auto-init failed:', err);
-});
+// Auto-initialize
+storageService.initialize();
 
 export default storageService;
 export { storageService };

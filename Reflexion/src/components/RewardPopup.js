@@ -2,57 +2,61 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
-  StyleSheet,
   Modal,
   TouchableOpacity,
   Animated,
   Dimensions,
 } from 'react-native';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import soundManager from '../services/SoundManager';
 import theme from '../styles/theme';
 
-const { COLORS, GRADIENTS, SHADOWS, TYPOGRAPHY, SPACING, BORDER_RADIUS } = theme;
+const {
+  COLORS,
+  GRADIENTS,
+  SHADOWS,
+  TYPOGRAPHY,
+  SPACING,
+  BORDER_RADIUS
+} = theme;
 
-// CRITICAL FIX: Get screen width safely inside component, not at module level
-const getScreenWidth = () => Dimensions.get('window').width;
+// ❗ REMOVE ALL MODULE-LEVEL Dimensions.get
+// (no getScreenWidth function here)
 
-/**
- * RewardPopup - Dopamine-optimized post-game reward display
- * 
- * Features:
- * - Animated count-up for XP and Coins
- * - Streak bonus display with glow
- * - Pulse animations
- * - Haptic feedback
- * - Sound effects
- * - Neon cyberpunk aesthetic
- */
+// ------------------------------------------------------
+
 const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
   const [displayXP, setDisplayXP] = useState(0);
   const [displayCoins, setDisplayCoins] = useState(0);
-  
+
+  // NEW: runtime-safe width state
+  const [screenWidth, setScreenWidth] = useState(
+    Dimensions.get('window')?.width ?? 300
+  );
+
+  useEffect(() => {
+    const sub = Dimensions.addEventListener('change', ({ window }) => {
+      setScreenWidth(window.width);
+    });
+    return () => sub?.remove?.();
+  }, []);
+
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const glowAnim = useRef(new Animated.Value(0)).current;
   const streakAnim = useRef(new Animated.Value(0)).current;
 
-  // Count-up animation
   useEffect(() => {
     if (visible) {
-      // Play reward sound
       (async () => {
-        await soundManager.play('levelUp'); // XP gain sound
+        await soundManager.play('levelUp');
       })();
-      
-      // Haptic feedback
+
       try {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      } catch (e) {
-        // Fail silently
-      }
+      } catch (e) {}
 
-      // Scale-in animation
       Animated.spring(scaleAnim, {
         toValue: 1,
         tension: 50,
@@ -60,7 +64,6 @@ const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
         useNativeDriver: true,
       }).start();
 
-      // Glow pulse animation
       Animated.loop(
         Animated.sequence([
           Animated.timing(glowAnim, {
@@ -76,7 +79,6 @@ const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
         ])
       ).start();
 
-      // Streak animation (if streak > 1)
       if (streak > 1) {
         Animated.sequence([
           Animated.timing(streakAnim, {
@@ -93,7 +95,6 @@ const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
         ]).start();
       }
 
-      // Count-up animation for XP
       const xpDuration = 1000;
       const xpSteps = 30;
       const xpIncrement = xp / xpSteps;
@@ -103,7 +104,7 @@ const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
       const xpInterval = setInterval(() => {
         xpStep++;
         xpCurrent += xpIncrement;
-        
+
         if (xpStep >= xpSteps) {
           setDisplayXP(xp);
           clearInterval(xpInterval);
@@ -112,13 +113,10 @@ const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
         }
       }, xpDuration / xpSteps);
 
-      // Count-up animation for Coins (delayed)
       setTimeout(() => {
         try {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        } catch (e) {
-          // Fail silently
-        }
+        } catch (e) {}
 
         const coinDuration = 800;
         const coinSteps = 20;
@@ -129,7 +127,7 @@ const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
         const coinInterval = setInterval(() => {
           coinStep++;
           coinCurrent += coinIncrement;
-          
+
           if (coinStep >= coinSteps) {
             setDisplayCoins(coins);
             clearInterval(coinInterval);
@@ -142,13 +140,11 @@ const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
       }, 300);
 
       return () => {
-        clearInterval();
         scaleAnim.setValue(0);
         glowAnim.stopAnimation();
         streakAnim.setValue(0);
       };
     } else {
-      // Reset on close
       setDisplayXP(0);
       setDisplayCoins(0);
       scaleAnim.setValue(0);
@@ -162,9 +158,7 @@ const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
       toValue: 0,
       duration: 200,
       useNativeDriver: true,
-    }).start(() => {
-      onClose();
-    });
+    }).start(() => onClose());
   };
 
   if (!visible) return null;
@@ -177,19 +171,13 @@ const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
   const streakBonus = streak > 1 ? Math.floor((streak - 1) * 0.1 * xp) : 0;
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="none"
-      onRequestClose={handleClose}
-    >
+    <Modal visible={visible} transparent animationType="none" onRequestClose={handleClose}>
       <View style={styles.overlay}>
         <Animated.View
           style={[
             styles.container,
-            {
-              transform: [{ scale: scaleAnim }],
-            },
+            { width: screenWidth * 0.9 },
+            { transform: [{ scale: scaleAnim }] }
           ]}
         >
           <LinearGradient
@@ -199,30 +187,18 @@ const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
             style={styles.gradientBorder}
           >
             <View style={styles.content}>
-              {/* Title */}
               <Text style={styles.title}>MISSION COMPLETE</Text>
 
-              {/* XP Display */}
-              <Animated.View
-                style={[
-                  styles.rewardItem,
-                  {
-                    shadowOpacity: glowOpacity,
-                  },
-                ]}
-              >
+              <Animated.View style={[styles.rewardItem, { shadowOpacity: glowOpacity }]}>
                 <Text style={styles.rewardLabel}>XP GAINED</Text>
                 <Text style={styles.rewardValue}>+{displayXP}</Text>
               </Animated.View>
 
-              {/* Coins Display */}
               <Animated.View
                 style={[
                   styles.rewardItem,
                   styles.coinsItem,
-                  {
-                    shadowOpacity: glowOpacity,
-                  },
+                  { shadowOpacity: glowOpacity }
                 ]}
               >
                 <Text style={styles.rewardLabel}>COINS EARNED</Text>
@@ -231,29 +207,14 @@ const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
                 </Text>
               </Animated.View>
 
-              {/* Streak Bonus (if applicable) */}
               {streak > 1 && (
-                <Animated.View
-                  style={[
-                    styles.streakBonus,
-                    {
-                      transform: [{ scale: streakAnim }],
-                    },
-                  ]}
-                >
-                  <Text style={styles.streakLabel}>
-                    🔥 STREAK BONUS x{streak}
-                  </Text>
+                <Animated.View style={[styles.streakBonus, { transform: [{ scale: streakAnim }] }]}>
+                  <Text style={styles.streakLabel}>🔥 STREAK BONUS x{streak}</Text>
                   <Text style={styles.streakValue}>+{streakBonus} XP</Text>
                 </Animated.View>
               )}
 
-              {/* Close Button */}
-              <TouchableOpacity
-                style={styles.closeButton}
-                onPress={handleClose}
-                activeOpacity={0.8}
-              >
+              <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
                 <LinearGradient
                   colors={GRADIENTS.secondary}
                   start={{ x: 0, y: 0 }}
@@ -271,7 +232,7 @@ const RewardPopup = React.memo(({ visible, xp, coins, streak, onClose }) => {
   );
 });
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   overlay: {
     flex: 1,
     backgroundColor: COLORS.overlay,
@@ -279,7 +240,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   container: {
-    width: getScreenWidth() * 0.9,
     maxWidth: 400,
   },
   gradientBorder: {
@@ -296,8 +256,8 @@ const styles = StyleSheet.create({
     fontFamily: TYPOGRAPHY?.primary || 'System',
     fontSize: TYPOGRAPHY?.heading || 32,
     color: COLORS.neonCyan,
-    letterSpacing: TYPOGRAPHY?.letterSpacingWide || 2,
-    marginBottom: SPACING?.lg || 24,
+    letterSpacing: 2,
+    marginBottom: SPACING.lg,
     textAlign: 'center',
     fontWeight: 'bold',
     ...SHADOWS.neonCyan,
@@ -321,18 +281,15 @@ const styles = StyleSheet.create({
     shadowColor: COLORS.neonMagenta,
   },
   rewardLabel: {
-    fontFamily: TYPOGRAPHY?.secondary || 'System',
-    fontSize: TYPOGRAPHY?.caption || 14,
+    fontSize: 14,
     color: COLORS.textSecondary,
-    letterSpacing: TYPOGRAPHY?.letterSpacingWide || 2,
-    marginBottom: SPACING?.xs || 4,
+    letterSpacing: 2,
+    marginBottom: 4,
     fontWeight: '600',
   },
   rewardValue: {
-    fontFamily: TYPOGRAPHY?.primary || 'System',
     fontSize: 48,
     color: COLORS.neonCyan,
-    letterSpacing: TYPOGRAPHY?.letterSpacingNormal || 0,
     fontWeight: 'bold',
   },
   coinsValue: {
@@ -350,16 +307,14 @@ const styles = StyleSheet.create({
     ...SHADOWS.neonPurple,
   },
   streakLabel: {
-    fontFamily: TYPOGRAPHY?.secondary || 'System',
-    fontSize: TYPOGRAPHY?.body || 16,
+    fontSize: 16,
     color: COLORS.neonPurple,
-    letterSpacing: TYPOGRAPHY?.letterSpacingWide || 2,
-    marginBottom: SPACING?.xs || 4,
+    letterSpacing: 2,
+    marginBottom: 4,
     fontWeight: '600',
   },
   streakValue: {
-    fontFamily: TYPOGRAPHY?.primary || 'System',
-    fontSize: TYPOGRAPHY?.heading || 32,
+    fontSize: 32,
     color: COLORS.neonPurple,
     fontWeight: 'bold',
   },
@@ -374,15 +329,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   closeButtonText: {
-    fontFamily: TYPOGRAPHY?.secondary || 'System',
-    fontSize: TYPOGRAPHY?.body || 16,
+    fontSize: 16,
     color: COLORS.textPrimary,
-    letterSpacing: TYPOGRAPHY?.letterSpacingWide || 2,
+    letterSpacing: 2,
     fontWeight: 'bold',
   },
 });
 
-RewardPopup.displayName = 'RewardPopup';
-
 export default RewardPopup;
-

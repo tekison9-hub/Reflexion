@@ -10,9 +10,8 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  StyleSheet,
-  Dimensions,
 } from 'react-native';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,7 +21,6 @@ import soundManager from '../services/SoundManager';
 import theme from '../styles/theme';
 
 const { TYPOGRAPHY } = theme;
-const { width } = Dimensions.get('window');
 
 export default function LeaderboardScreen({ navigation }) {
   const [activeMode, setActiveMode] = useState(GAME_MODES.CLASSIC);
@@ -33,7 +31,6 @@ export default function LeaderboardScreen({ navigation }) {
     loadLeaderboard();
     updateResetTimer();
 
-    // Update timer every minute
     const interval = setInterval(updateResetTimer, 60000);
     return () => clearInterval(interval);
   }, [activeMode]);
@@ -59,10 +56,10 @@ export default function LeaderboardScreen({ navigation }) {
   };
 
   const getRankColor = (rank) => {
-    if (rank === 1) return '#FFD700'; // Gold
-    if (rank === 2) return '#C0C0C0'; // Silver
-    if (rank === 3) return '#CD7F32'; // Bronze
-    return '#4ECDC4'; // Default
+    if (rank === 1) return '#FFD700';
+    if (rank === 2) return '#C0C0C0';
+    if (rank === 3) return '#CD7F32';
+    return '#4ECDC4';
   };
 
   const getRankMedal = (rank) => {
@@ -109,11 +106,13 @@ export default function LeaderboardScreen({ navigation }) {
             style={[styles.tab, activeMode === GAME_MODES.CLASSIC && styles.tabActive]}
             onPress={() => handleModeSwitch(GAME_MODES.CLASSIC)}
           >
-            <Text style={[
-              styles.tabText,
-              activeMode === GAME_MODES.CLASSIC && styles.tabTextActive,
-              { fontFamily: TYPOGRAPHY?.bold || 'System' }
-            ]}>
+            <Text
+              style={[
+                styles.tabText,
+                activeMode === GAME_MODES.CLASSIC && styles.tabTextActive,
+                { fontFamily: TYPOGRAPHY?.bold || 'System' },
+              ]}
+            >
               ⚡ Classic
             </Text>
           </TouchableOpacity>
@@ -121,11 +120,13 @@ export default function LeaderboardScreen({ navigation }) {
             style={[styles.tab, activeMode === GAME_MODES.RUSH && styles.tabActive]}
             onPress={() => handleModeSwitch(GAME_MODES.RUSH)}
           >
-            <Text style={[
-              styles.tabText,
-              activeMode === GAME_MODES.RUSH && styles.tabTextActive,
-              { fontFamily: TYPOGRAPHY?.bold || 'System' }
-            ]}>
+            <Text
+              style={[
+                styles.tabText,
+                activeMode === GAME_MODES.RUSH && styles.tabTextActive,
+                { fontFamily: TYPOGRAPHY?.bold || 'System' },
+              ]}
+            >
               💥 Rush
             </Text>
           </TouchableOpacity>
@@ -152,14 +153,17 @@ export default function LeaderboardScreen({ navigation }) {
                 }
                 style={styles.entryCard}
               >
-                {/* Rank */}
-                <View style={[styles.rankBadge, { backgroundColor: getRankColor(index + 1) + '20' }]}>
+                <View
+                  style={[
+                    styles.rankBadge,
+                    { backgroundColor: getRankColor(index + 1) + '20' },
+                  ]}
+                >
                   <Text style={[styles.rankText, { color: getRankColor(index + 1) }]}>
                     {getRankMedal(index + 1)}
                   </Text>
                 </View>
 
-                {/* Player Info */}
                 <View style={styles.entryInfo}>
                   <Text style={[styles.entryName, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>
                     {entry.playerName || 'Player'}
@@ -167,17 +171,29 @@ export default function LeaderboardScreen({ navigation }) {
                   <Text style={styles.entryDate}>{formatDate(entry.timestamp)}</Text>
                 </View>
 
-                {/* Stats */}
                 <View style={styles.entryStats}>
                   <View style={styles.statItem}>
-                    <Text style={[styles.statValue, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>
+                    <Text
+                      style={[
+                        styles.statValue,
+                        { fontFamily: TYPOGRAPHY?.bold || 'System' },
+                      ]}
+                    >
                       {entry.score}
                     </Text>
                     <Text style={styles.statLabel}>Score</Text>
                   </View>
                   <View style={styles.statDivider} />
                   <View style={styles.statItem}>
-                    <Text style={[styles.statValue, { color: '#FF6B9D', fontFamily: TYPOGRAPHY?.bold || 'System' }]}>
+                    <Text
+                      style={[
+                        styles.statValue,
+                        {
+                          color: '#FF6B9D',
+                          fontFamily: TYPOGRAPHY?.bold || 'System',
+                        },
+                      ]}
+                    >
                       {entry.combo}x
                     </Text>
                     <Text style={styles.statLabel}>Combo</Text>
@@ -187,7 +203,6 @@ export default function LeaderboardScreen({ navigation }) {
             ))
           )}
 
-          {/* Footer Spacing */}
           <View style={{ height: 40 }} />
         </ScrollView>
       </LinearGradient>
@@ -195,7 +210,7 @@ export default function LeaderboardScreen({ navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   container: {
     flex: 1,
     backgroundColor: '#0f1419',
@@ -347,4 +362,5 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
 });
+
 

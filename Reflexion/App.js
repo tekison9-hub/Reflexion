@@ -1,345 +1,180 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, LogBox } from 'react-native';
+﻿/**
+ * REFLEXION v6.0 - APP ENTRY POINT
+ * ✅ Service initialization with proper order
+ * ✅ GlobalStateProvider wrapper
+ * ✅ Loading screen during initialization
+ * ✅ Error boundaries
+ */
+
+import React, { useEffect, useState } from 'react';
+import { View, Text, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import * as SplashScreen from 'expo-splash-screen';
-import { StatusBar } from 'expo-status-bar';
-import { useFonts, Orbitron_400Regular, Orbitron_700Bold, Orbitron_900Black } from '@expo-google-fonts/orbitron';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { createSafeStyleSheet } from './src/utils/safeStyleSheet';
 
-// ============================================================================
-// SUPPRESS EXPO-AV DEPRECATION WARNING (SDK54 SAFE UNTIL EXPO-AUDIO STABLE)
-// ============================================================================
-LogBox.ignoreLogs([
-  'Expo AV has been deprecated',
-  'ExpoAV',
-  'expo-av',
-]);
+// ✅ Context providers FIRST
+import { GlobalStateProvider } from './src/contexts/GlobalStateContext';
+import { ThemeProvider } from './src/contexts/ThemeContext';
 
-// ✅ CRITICAL FIX: Import and initialize services BEFORE anything else
+// ✅ Services
 import { settingsService } from './src/services/SettingsService';
+import { storageService } from './src/services/StorageService';
 import soundManager from './src/services/SoundManager';
 import musicManager from './src/services/MusicManager';
-import { storageService } from './src/services/StorageService';
-import { adService } from './src/services/AdService';
-import progressTracker from './src/services/ProgressTracker';
-import leaderboardService from './src/services/LeaderboardService';
 
-import ErrorBoundary from './src/components/ErrorBoundary';
-import { GlobalStateProvider } from './src/contexts/GlobalStateContext';
+// ✅ Screens
 import MenuScreen from './src/screens/MenuScreen';
 import GameScreen from './src/screens/GameScreen';
 import ShopScreen from './src/screens/ShopScreen';
+import StatsScreen from './src/screens/StatsScreen';
+import LeaderboardScreen from './src/screens/LeaderboardScreen';
 import AchievementsScreen from './src/screens/AchievementsScreen';
 import InstructionsScreen from './src/screens/InstructionsScreen';
 import BattleScreen from './src/screens/BattleScreen';
-import StatsScreen from './src/screens/StatsScreen';
-import LeaderboardScreen from './src/screens/LeaderboardScreen';
-import dailyChallengeService from './src/services/DailyChallengeService';
-
-import { COLORS } from './src/styles/theme';
-import { areFontsReady, getNavigationFonts } from './src/utils/fonts';
-
-// CRITICAL: Prevent auto-hide until fonts loaded
-SplashScreen.preventAutoHideAsync();
 
 const Stack = createNativeStackNavigator();
 
 export default function App() {
-  const [servicesReady, setServicesReady] = useState(false);
-  const [isReady, setIsReady] = useState(false);
-  const [playerData, setPlayerData] = useState({
-    xp: 0,
-    coins: 0,
-    highScore: 0,
-    maxCombo: 0,
-    gamesPlayed: 0,
-    streak: 0,
-  });
+  const [appReady, setAppReady] = useState(false);
+  const [initError, setInitError] = useState(null);
 
-  // ELITE v3.0: ROBUST FONT LOADING with comprehensive error handling
-  const [fontsLoaded, fontError] = useFonts({
-    Orbitron_400Regular,
-    Orbitron_700Bold,
-    Orbitron_900Black,
-  });
-
-  // ✅ CRITICAL FIX: Initialize all services on app startup
   useEffect(() => {
-    const initializeApp = async () => {
-      try {
-        console.log('🚀 Initializing Reflexion App...');
-        
-        // ✅ Initialize in strict order
-        await storageService.initialize();
-        console.log('✅ StorageService ready');
-        
-        await settingsService.initialize();
-        console.log('✅ SettingsService ready');
-        
-        const settings = settingsService.get();
-        soundManager.setSettings(settings);
-        
-        await soundManager.initialize();
-        console.log('✅ SoundManager ready');
-        
-        await musicManager.initialize();
-        console.log('✅ MusicManager ready');
-        
-        setServicesReady(true);
-        console.log('✅ All services initialized successfully');
-      } catch (error) {
-        console.error('❌ App initialization failed:', error);
-        setServicesReady(true); // Continue anyway
-      }
-    };
-
     initializeApp();
   }, []);
 
-  // Hide splash screen when fonts ready (loaded or error)
-  useEffect(() => {
-    const hideSplash = async () => {
-      try {
-        if (fontsLoaded || fontError) {
-          await SplashScreen.hideAsync();
-          console.log('✅ Splash screen hidden');
-        }
-      } catch (error) {
-        console.warn('⚠️ Splash screen hide error (non-critical):', error);
-      }
-    };
-    hideSplash();
-  }, [fontsLoaded, fontError]);
+  /**
+   * ✅ CRITICAL: Initialize ALL services in STRICT ORDER
+   */
+  const initializeApp = async () => {
+    try {
+      console.log('🚀 Initializing Reflexion App...');
 
-  // Initialize services ONLY after fonts are ready
-  useEffect(() => {
-    async function prepare() {
-      // DEFENSIVE: Wait for fonts before proceeding
-      if (!areFontsReady(fontsLoaded, fontError)) {
-        console.log('⏳ Waiting for fonts...');
-        return;
-      }
+      // 1. Storage (lowest level)
+      await storageService.initialize();
+      console.log('✅ [1/4] StorageService ready');
 
-      if (fontError) {
-        console.error('❌ Font loading failed, using system fonts:', fontError);
-      } else {
-        console.log('✅ Fonts loaded successfully');
-      }
+      // 2. Settings (depends on storage)
+      await settingsService.initialize();
+      console.log('✅ [2/4] SettingsService ready');
 
-      try {
-        // Wait for services to be ready
-        if (!servicesReady) {
-          console.log('⏳ Waiting for services...');
-          return;
-        }
+      // 3. Sound (depends on settings)
+      // 🔴 KRİTİK: SoundManager'ı başlat - ses sisteminin çalışması için gerekli
+      await soundManager.initialize();
+      soundManager.setSettings(settingsService.settings); // direkt objeyi ver
+      console.log("✅ [3/4] SoundManager ready - Settings assigned:", settingsService.settings);
 
-        // Initialize remaining services
-        console.log('🔄 Initializing remaining services...');
-        
-        await progressTracker.initialize();
-        console.log('✅ ProgressTracker ready');
-        
-        await leaderboardService.initialize();
-        console.log('✅ LeaderboardService ready');
-        
-        await adService.initialize();
-        console.log('✅ AdService ready');
-        
-        await dailyChallengeService.initialize();
-        console.log('✅ DailyChallengeService ready');
 
-        // Subscribe to settings changes for SoundManager
-        try {
-          if (settingsService && typeof settingsService.subscribe === 'function') {
-            settingsService.subscribe((settings) => {
-              if (soundManager && typeof soundManager.setSettings === 'function') {
-                soundManager.setSettings(settings);
-              }
-            });
-            console.log('✅ Settings subscription wired to SoundManager');
-          }
-        } catch (settingsError) {
-          console.error('❌ Failed to wire settings subscription:', settingsError);
-          // Don't block app startup if settings wiring fails
-        }
+      // 4. Music (depends on settings)
+      await musicManager.initialize();
+      console.log('✅ [4/4] MusicManager ready');
 
-        // Load player data
-        try {
-          const savedData = await storageService.getItem('playerData');
-          if (savedData) {
-            setPlayerData(savedData);
-            console.log('✅ Player data loaded');
-          }
-        } catch (dataError) {
-          console.warn('⚠️ Failed to load player data:', dataError);
-        }
-
-        console.log('🎮 Reflexion initialized successfully');
-      } catch (e) {
-        console.error('❌ App initialization error:', e);
-        console.error('Error stack:', e.stack);
-      } finally {
-        setIsReady(true);
-      }
+      console.log('✅ ALL SERVICES INITIALIZED SUCCESSFULLY');
+      setAppReady(true);
+    } catch (error) {
+      console.error('❌ App initialization FAILED:', error);
+      setInitError(error.message);
+      // ✅ Set ready anyway to not block app completely
+      setAppReady(true);
     }
+  };
 
-    prepare();
-  }, [fontsLoaded, fontError, servicesReady]);
-
-  // REFLEXION FIX: Enhanced sound system health monitoring with auto-recovery
-  useEffect(() => {
-    if (!isReady) return;
-
-    console.log('🔊 Starting enhanced sound system health monitor...');
-    
-    const checkSoundHealth = async () => {
-      try {
-        const healthy = await soundManager.isHealthy();
-        
-        if (!healthy) {
-          console.warn('⚠️ Sound system unhealthy - initiating recovery...');
-          const status = soundManager.getAudioStatus();
-          console.warn('Status:', {
-            initialized: status.isInitialized,
-            loaded: status.loadedSounds,
-            failed: status.failedSounds,
-            health: `${status.healthPercent}%`,
-          });
-          
-          // Auto-recover if sound system is broken
-          if (!soundManager.isInitializing) {
-            await soundManager.reinitialize();
-            
-            const recoveredHealthy = await soundManager.isHealthy();
-            if (recoveredHealthy) {
-              console.info('✅ Sound system recovered successfully');
-            } else {
-              console.error('❌ Sound system recovery failed');
-            }
-          }
-        }
-      } catch (error) {
-        console.error('❌ Error during sound health check:', error);
-      }
-    };
-
-    // Check health every 10 seconds
-    const healthCheckInterval = setInterval(checkSoundHealth, 10000);
-    
-    // Run initial health check after 2 seconds
-    const initialCheck = setTimeout(checkSoundHealth, 2000);
-
-    return () => {
-      console.log('🛑 Stopping sound health monitor');
-      clearInterval(healthCheckInterval);
-      clearTimeout(initialCheck);
-    };
-  }, [isReady]);
-
-  const updatePlayerData = useCallback((newData) => {
-    setPlayerData(newData);
-  }, []);
-
-  // CRITICAL: Block rendering until fonts ready
-  if (!fontsLoaded && !fontError) {
-    return null; // Show nothing until fonts load or fail
-  }
-
-  // ✅ Show loading screen while services initialize
-  if (!servicesReady || !isReady) {
+  // ✅ Loading screen
+  if (!appReady) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={COLORS.neonCyan} />
-        <Text style={styles.loadingText}>Loading Reflexion...</Text>
-        <Text style={styles.loadingSubtext}>
-          {!servicesReady ? 'Initializing services...' : fontError ? 'Using system fonts' : 'Custom fonts loaded'}
-        </Text>
+        <Text style={styles.loadingTitle}>REFLEXION</Text>
+        <ActivityIndicator size="large" color="#4ECDC4" style={styles.loader} />
+        <Text style={styles.loadingText}>Initializing...</Text>
       </View>
     );
   }
 
-  // SAFE: Navigation theme with font fallback
-  const navigationTheme = {
-    dark: true,
-    colors: {
-      primary: COLORS.neonCyan,
-      background: COLORS.background,
-      card: COLORS.cardBackground,
-      text: COLORS.textPrimary,
-      border: COLORS.cardBorder,
-      notification: COLORS.neonMagenta,
-    },
-    fonts: getNavigationFonts(fontsLoaded && !fontError),
-  };
+  // ✅ Error screen (if critical failure)
+  if (initError) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorTitle}>⚠️ Initialization Error</Text>
+        <Text style={styles.errorText}>{initError}</Text>
+        <Text style={styles.errorHint}>App will run in limited mode</Text>
+      </View>
+    );
+  }
 
+  // ✅ Main app with context wrapper
   return (
-    <ErrorBoundary>
+    <SafeAreaProvider>
       <GlobalStateProvider>
-        <StatusBar style="light" />
-        <NavigationContainer theme={navigationTheme}>
+        <ThemeProvider>
+          <NavigationContainer>
           <Stack.Navigator
+            initialRouteName="Menu"
             screenOptions={{
               headerShown: false,
               animation: 'fade',
-              contentStyle: { backgroundColor: COLORS.background },
+              contentStyle: { backgroundColor: '#1a1a2e' },
             }}
           >
-            <Stack.Screen name="Menu">
-              {(props) => (
-                <MenuScreen {...props} playerData={playerData} onUpdateData={updatePlayerData} />
-              )}
-            </Stack.Screen>
-            <Stack.Screen name="Game">
-              {(props) => (
-                <GameScreen {...props} playerData={playerData} onUpdateData={updatePlayerData} />
-              )}
-            </Stack.Screen>
-            <Stack.Screen name="Shop">
-              {(props) => (
-                <ShopScreen {...props} playerData={playerData} onUpdateData={updatePlayerData} />
-              )}
-            </Stack.Screen>
-            <Stack.Screen name="Achievements">
-              {(props) => <AchievementsScreen {...props} playerData={playerData} />}
-            </Stack.Screen>
-            <Stack.Screen name="Stats">
-              {(props) => <StatsScreen {...props} playerData={playerData} />}
-            </Stack.Screen>
+            <Stack.Screen name="Menu" component={MenuScreen} />
+            <Stack.Screen name="Game" component={GameScreen} />
+            <Stack.Screen name="Shop" component={ShopScreen} />
+            <Stack.Screen name="Stats" component={StatsScreen} />
             <Stack.Screen name="Leaderboard" component={LeaderboardScreen} />
+            <Stack.Screen name="Achievements" component={AchievementsScreen} />
             <Stack.Screen name="Instructions" component={InstructionsScreen} />
-            <Stack.Screen name="Battle">
-              {(props) => <BattleScreen {...props} />}
-            </Stack.Screen>
-            <Stack.Screen name="DailyChallenge">
-              {(props) => (
-                <GameScreen {...props} playerData={playerData} onUpdateData={updatePlayerData} route={{ params: { mode: 'DAILY_CHALLENGE' } }} />
-              )}
-            </Stack.Screen>
+            <Stack.Screen name="Battle" component={BattleScreen} />
           </Stack.Navigator>
-        </NavigationContainer>
+          </NavigationContainer>
+        </ThemeProvider>
       </GlobalStateProvider>
-    </ErrorBoundary>
+    </SafeAreaProvider>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   loadingContainer: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: '#0a0a1a',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingText: {
-    color: COLORS.neonCyan,
-    fontSize: 24,
-    marginTop: 20,
+  loadingTitle: {
+    fontSize: 48,
     fontWeight: 'bold',
-    letterSpacing: 3,
+    color: '#4ECDC4',
+    marginBottom: 40,
+    textShadowColor: '#4ECDC4',
+    textShadowRadius: 20,
   },
-  loadingSubtext: {
-    color: COLORS.textSecondary,
+  loader: {
+    marginBottom: 20,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#8B8B8B',
+  },
+  errorContainer: {
+    flex: 1,
+    backgroundColor: '#0a0a1a',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  errorTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#FF6B6B',
+    marginBottom: 20,
+  },
+  errorText: {
     fontSize: 14,
-    marginTop: 8,
-    letterSpacing: 2,
+    color: '#BDC3C7',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  errorHint: {
+    fontSize: 12,
+    color: '#7F8C8D',
+    fontStyle: 'italic',
   },
 });

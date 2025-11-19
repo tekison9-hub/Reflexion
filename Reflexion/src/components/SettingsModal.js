@@ -4,12 +4,13 @@ import {
   Text,
   Modal,
   TouchableOpacity,
-  StyleSheet,
   Switch,
   Platform,
   Alert,
 } from 'react-native';
-import settingsService from '../services/SettingsService';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
+// ✅ FIX: Use named import for consistency
+import { settingsService } from '../services/SettingsService';
 import musicManager from '../services/MusicManager';
 
 export default function SettingsModal({ visible, onClose }) {
@@ -44,6 +45,14 @@ export default function SettingsModal({ visible, onClose }) {
     try {
       if (settingsService && typeof settingsService.setSoundEnabled === 'function') {
         await settingsService.setSoundEnabled(value);
+        // === HAPTIC PATCH START ===
+        // Log real updated values
+        const currentSfx = value;
+        const currentVibration = hapticsEnabled;
+        console.log(`⚙️ SettingsChange => { sfx: ${currentSfx}, vibration: ${currentVibration} }`);
+        // === HAPTIC PATCH END ===
+        const { debugEvents } = require('../utils/debugLog');
+        debugEvents.settingsChange(value, hapticsEnabled);
       }
     } catch (error) {
       console.warn('⚠️ Error toggling sound:', error);
@@ -76,6 +85,14 @@ export default function SettingsModal({ visible, onClose }) {
     try {
       if (settingsService && typeof settingsService.setHapticsEnabled === 'function') {
         await settingsService.setHapticsEnabled(value);
+        // === HAPTIC PATCH START ===
+        // Log real updated values
+        const currentSfx = soundEnabled;
+        const currentVibration = value;
+        console.log(`⚙️ SettingsChange => { sfx: ${currentSfx}, vibration: ${currentVibration} }`);
+        // === HAPTIC PATCH END ===
+        const { debugEvents } = require('../utils/debugLog');
+        debugEvents.settingsChange(soundEnabled, value);
       }
     } catch (error) {
       console.warn('⚠️ Error toggling haptics:', error);
@@ -154,7 +171,7 @@ export default function SettingsModal({ visible, onClose }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.9)',

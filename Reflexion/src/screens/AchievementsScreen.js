@@ -3,13 +3,28 @@ import {
   View,
   Text,
   TouchableOpacity,
-  StyleSheet,
   ScrollView,
   Dimensions,
 } from 'react-native';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useGlobalState } from '../contexts/GlobalStateContext';
 
-export default function AchievementsScreen({ navigation, playerData }) {
+export default function AchievementsScreen({ navigation, playerData: propPlayerData }) {
+  // ✅ TASK 2 FIX: Safe playerData with null checks and AsyncStorage fallback
+  const { playerData: globalPlayerData } = useGlobalState();
+  const [localPlayerData, setLocalPlayerData] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Use prop data if available, otherwise use global context, otherwise load from storage
+  const playerData = propPlayerData || globalPlayerData || localPlayerData || {
+    gamesPlayed: 0,
+    maxCombo: 0,
+    highScore: 0,
+    xp: 0,
+    coins: 0,
+  };
+  
   // SAFE DIMENSIONS PATTERN
   const [screenDimensions, setScreenDimensions] = useState({ width: 0, height: 0 });
   
@@ -20,8 +35,42 @@ export default function AchievementsScreen({ navigation, playerData }) {
     return () => sub?.remove?.();
   }, []);
 
+  // ✅ TASK 2 FIX: Load player data from AsyncStorage if not available
+  useEffect(() => {
+    const loadPlayerData = async () => {
+      try {
+        if (propPlayerData || globalPlayerData) {
+          setIsLoading(false);
+          return;
+        }
+        
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const data = await AsyncStorage.getItem('@reflexion_player_data');
+        if (data) {
+          const parsed = JSON.parse(data);
+          setLocalPlayerData(parsed);
+        }
+      } catch (error) {
+        console.warn('⚠️ AchievementsScreen: Could not load player data:', error);
+        // Use safe defaults
+        setLocalPlayerData({
+          gamesPlayed: 0,
+          maxCombo: 0,
+          highScore: 0,
+          xp: 0,
+          coins: 0,
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadPlayerData();
+  }, [propPlayerData, globalPlayerData]);
+
+  // ✅ TASK 2 FIX: Safe achievements with null checks
   const achievements = [
-    { id: 'first_win', name: 'First Victory', desc: 'Complete your first game', unlocked: playerData.gamesPlayed >= 1 },
+    { id: 'first_win', name: 'First Victory', desc: 'Complete your first game', unlocked: (playerData?.gamesPlayed || 0) >= 1 },
     { id: 'combo_5', name: 'Combo Starter', desc: 'Reach 5x combo', unlocked: (playerData.maxCombo || 0) >= 5 },
     { id: 'combo_10', name: 'Combo Master', desc: 'Reach 10x combo', unlocked: (playerData.maxCombo || 0) >= 10 },
     { id: 'combo_20', name: 'Combo Legend', desc: 'Reach 20x combo', unlocked: (playerData.maxCombo || 0) >= 20 },
@@ -39,8 +88,15 @@ export default function AchievementsScreen({ navigation, playerData }) {
   const totalCount = achievements.length;
   const progress = (unlockedCount / totalCount) * 100;
 
-  if (screenDimensions.width === 0) {
+  // ✅ TASK 2 FIX: Show loading state while data loads
+  if (isLoading || screenDimensions.width === 0) {
     return <View style={styles.container} />;
+  }
+  
+  // ✅ TASK 2 FIX: Graceful return if navigation missing
+  if (!navigation) {
+    console.warn('⚠️ AchievementsScreen: Navigation not available');
+    return <View style={styles.container}><Text style={styles.title}>Achievements</Text></View>;
   }
 
   return (
@@ -88,7 +144,7 @@ export default function AchievementsScreen({ navigation, playerData }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   container: {
     flex: 1,
     backgroundColor: '#1a1a2e',

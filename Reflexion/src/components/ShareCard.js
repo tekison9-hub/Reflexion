@@ -5,13 +5,19 @@
  */
 
 import React, { useRef } from 'react';
-import { View, Text, StyleSheet, Alert, TouchableOpacity } from 'react-native';
+import { View, Text, Alert, TouchableOpacity } from 'react-native';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { LinearGradient } from 'expo-linear-gradient';
 import ViewShot from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
 
-export const ShareCard = ({ score, combo, rank, reactionTime, onShare, onClose }) => {
+export const ShareCard = ({ score, combo, rank, reactionTime, onShare, onClose, theme = null }) => {
   const viewShotRef = useRef();
+  
+  // 🔴 BUG FIX: Use theme colors if provided, otherwise fallback to defaults
+  const primaryColor = theme?.primaryColor || '#00E5FF';
+  const gradientColors = theme?.gradientColors || ['#1a1a2e', '#16213e', '#0f3460'];
+  const backgroundColor = theme?.backgroundColor || '#1a1a2e';
 
   const handleShare = async () => {
     try {
@@ -37,12 +43,12 @@ export const ShareCard = ({ score, combo, rank, reactionTime, onShare, onClose }
     <View style={styles.container}>
       <ViewShot ref={viewShotRef} options={{ format: 'png', quality: 1.0 }}>
         <LinearGradient
-          colors={['#1a1a2e', '#16213e', '#0f3460']}
-          style={styles.card}
+          colors={gradientColors}
+          style={[styles.card, { borderColor: primaryColor }]}
         >
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.logo}>⚡ REFLEXION ⚡</Text>
+            <Text style={[styles.logo, { color: primaryColor, textShadowColor: primaryColor }]}>⚡ REFLEXION ⚡</Text>
             <Text style={styles.tagline}>Test Your Reflexes</Text>
           </View>
 
@@ -50,7 +56,7 @@ export const ShareCard = ({ score, combo, rank, reactionTime, onShare, onClose }
           <View style={styles.statsContainer}>
             <View style={styles.mainStat}>
               <Text style={styles.mainStatLabel}>SCORE</Text>
-              <Text style={styles.mainStatValue}>{score.toLocaleString()}</Text>
+              <Text style={[styles.mainStatValue, { color: primaryColor, textShadowColor: primaryColor }]}>{score.toLocaleString()}</Text>
             </View>
 
             <View style={styles.miniStats}>
@@ -61,7 +67,7 @@ export const ShareCard = ({ score, combo, rank, reactionTime, onShare, onClose }
           </View>
 
           {/* Challenge */}
-          <View style={styles.challenge}>
+          <View style={[styles.challenge, { borderColor: `${primaryColor}30` }]}>
             <Text style={styles.challengeText}>Can you beat me?</Text>
           </View>
 
@@ -74,7 +80,7 @@ export const ShareCard = ({ score, combo, rank, reactionTime, onShare, onClose }
       </ViewShot>
 
       {/* Share Button */}
-      <TouchableOpacity style={styles.shareButton} onPress={handleShare}>
+      <TouchableOpacity style={[styles.shareButton, { backgroundColor: primaryColor }]} onPress={handleShare}>
         <Text style={styles.shareButtonText}>📸 Share to Social Media</Text>
       </TouchableOpacity>
 
@@ -94,7 +100,7 @@ const StatItem = ({ icon, label, value }) => (
   </View>
 );
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   container: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -104,7 +110,7 @@ const styles = StyleSheet.create({
     padding: 30,
     borderRadius: 20,
     borderWidth: 2,
-    borderColor: '#00E5FF',
+    // 🔴 BUG FIX: borderColor set dynamically
   },
   header: {
     alignItems: 'center',
@@ -113,9 +119,8 @@ const styles = StyleSheet.create({
   logo: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#00E5FF',
+    // 🔴 BUG FIX: color and textShadowColor set dynamically
     letterSpacing: 2,
-    textShadowColor: '#00E5FF',
     textShadowRadius: 10,
   },
   tagline: {
@@ -138,8 +143,7 @@ const styles = StyleSheet.create({
   mainStatValue: {
     fontSize: 56,
     fontWeight: 'bold',
-    color: '#00E5FF',
-    textShadowColor: '#00E5FF',
+    // 🔴 BUG FIX: color and textShadowColor set dynamically
     textShadowRadius: 15,
   },
   miniStats: {
@@ -168,7 +172,7 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: '#00E5FF30',
+    // 🔴 BUG FIX: borderColor set dynamically
     marginBottom: 20,
   },
   challengeText: {
@@ -190,7 +194,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   shareButton: {
-    backgroundColor: '#00E5FF',
+    // 🔴 BUG FIX: backgroundColor set dynamically
     paddingHorizontal: 40,
     paddingVertical: 15,
     borderRadius: 12,
@@ -210,6 +214,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
+
+
+
 
 
 

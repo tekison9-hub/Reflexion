@@ -3,53 +3,103 @@ import {
   View,
   Text,
   TouchableOpacity,
-  StyleSheet,
   Dimensions,
   Animated,
   Modal,
   Pressable,
   Alert,
 } from 'react-native';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { storageService } from '../services/StorageService';
 import { adService } from '../services/AdService';
 import { analytics } from '../services/AnalyticsService';
 import musicManager from '../services/MusicManager';
 import soundManager from '../services/SoundManager';
-import settingsService from '../services/SettingsService';
+// ✅ SAFE IMPORTS
+import { settingsService } from '../services/SettingsService';
 import SettingsModal from '../components/SettingsModal';
 import ModeSelectorModal from '../components/ModeSelectorModal';
-import { GAME_MODES, getLevelFromXP, getXPProgress, isModeUnlocked, getModeUnlockLevel } from '../utils/GameLogic';
+import { 
+  GAME_MODES, 
+  getLevelFromXP, 
+  getXPProgress, 
+  isModeUnlocked, 
+  getModeUnlockLevel,
+  isSpeedTestTargetCountUnlocked,
+  getSpeedTestTargetCountUnlockLevel,
+  getAvailableSpeedTestTargetCounts,
+  GAME_CONSTANTS,
+} from '../utils/GameLogic';
 import theme from '../styles/theme';
 import dailyChallengeService from '../services/DailyChallengeService';
 import { useGlobalState } from '../contexts/GlobalStateContext';
+import { SPACING, BORDER_RADIUS } from '../utils/layoutConstants';
+// === ANIMATION_EASING FIX START ===
+import { ANIMATION_EASING } from '../utils/animationConstants';
+// === ANIMATION_EASING FIX END ===
 
 const { COLORS, TYPOGRAPHY } = theme;
 
-// MenuScreen.js - en üste ekleyin
-console.log('🔍 MenuScreen loading...');
-console.log('🔍 useGlobalState:', typeof useGlobalState);
-
-const MenuScreen = React.memo(({ navigation, playerData: propPlayerData, onUpdateData }) => {
-  console.log('🔍 MenuScreen rendering...');
-  console.log('🔍 propPlayerData:', propPlayerData);
+const MenuScreen = React.memo(({ navigation }) => {
   
-  // ✅ CRITICAL FIX: Safe fallback for playerData
-  const globalState = useGlobalState();
-  console.log('🔍 globalState:', globalState);
-  console.log('🔍 globalState.playerData:', globalState?.playerData);
-  const playerData = globalState?.playerData || propPlayerData || {
-    coins: 0,
-    xp: 0,
-    level: 1,
-    highScore: 0,
-    gamesPlayed: 0,
-  };
+  // ✅ SAFE: Context hook with fallback
+  const {
+    playerData,
+    addCoins,
+    addXP,
+    updatePlayerData,
+    isInitialized,
+    loadPlayerData,
+  } = useGlobalState();
 
-  // ✅ Safe function wrappers
-  const addCoins = globalState?.addCoins || (async () => {});
-  const updatePlayerData = globalState?.updatePlayerData || onUpdateData || (async () => {});
+  // ✅ SAFE: Check initialization before rendering
+  useEffect(() => {
+    if (!isInitialized) {
+      console.warn('⚠️ MenuScreen loaded before GlobalState initialized');
+    }
+  }, [isInitialized]);
+
+  // CRITICAL FIX PRIORITY 2: Reload player data when screen focuses (with infinite loop prevention)
+  const loadingRef = React.useRef(false);
+  
+  useFocusEffect(
+    React.useCallback(() => {
+      let isActive = true; // Prevent state updates if unmounted
+      
+      const refreshData = async () => {
+        // Prevent multiple simultaneous loads
+        if (loadingRef.current) {
+          return;
+        }
+        
+        if (!isInitialized || !loadPlayerData) {
+          return;
+        }
+        
+        loadingRef.current = true;
+        
+        try {
+          await loadPlayerData();
+          // CRITICAL FIX: Removed console.log to prevent spam
+          // Data will update via context automatically
+        } catch (error) {
+          console.warn('⚠️ Failed to reload player data:', error);
+        } finally {
+          loadingRef.current = false;
+        }
+      };
+      
+      refreshData();
+      
+      // Cleanup function
+      return () => {
+        isActive = false;
+      };
+    }, [isInitialized, loadPlayerData]) // CRITICAL FIX: Removed playerData from dependencies
+  );
 
   const [screenDimensions, setScreenDimensions] = useState({ width: 0, height: 0 });
   
@@ -82,10 +132,15 @@ const MenuScreen = React.memo(({ navigation, playerData: propPlayerData, onUpdat
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
   
+  // VISUAL UPGRADE: Breathing glow and micro-bounce for Play button
+  const playButtonGlowAnim = useRef(new Animated.Value(0.75)).current;
+  const playButtonBounceAnim = useRef(new Animated.Value(1)).current;
+  
   const [showDailyReward, setShowDailyReward] = useState(false);
   const [dailyRewardClaimed, setDailyRewardClaimed] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showModeSelector, setShowModeSelector] = useState(false);
+  const [showSpeedTestSelector, setShowSpeedTestSelector] = useState(false);
   const [selectedMode, setSelectedMode] = useState(GAME_MODES.CLASSIC);
   const [dailyChallengeCompleted, setDailyChallengeCompleted] = useState(false);
   const [timeUntilNext, setTimeUntilNext] = useState('');
@@ -113,6 +168,46 @@ const MenuScreen = React.memo(({ navigation, playerData: propPlayerData, onUpdat
       friction: 7,
       useNativeDriver: true,
     }).start();
+
+    // === EASING FIX START ===
+    // VISUAL UPGRADE: Breathing glow animation for Play button (opacity 0.75 → 1.0)
+    const breathingGlow = Animated.loop(
+      Animated.sequence([
+        Animated.timing(playButtonGlowAnim, {
+          toValue: 1.0,
+          duration: 2000,
+          easing: ANIMATION_EASING.DOPAMINE_EASING_OUT_CUBIC,
+          useNativeDriver: true,
+        }),
+        Animated.timing(playButtonGlowAnim, {
+          toValue: 0.75,
+          duration: 2000,
+          easing: ANIMATION_EASING.DOPAMINE_EASING_OUT_CUBIC,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    breathingGlow.start();
+
+    // VISUAL UPGRADE: Soft scale micro-bounce for Play button (1.0 → 1.04 → 1.0)
+    const microBounce = Animated.loop(
+      Animated.sequence([
+        Animated.timing(playButtonBounceAnim, {
+          toValue: 1.04,
+          duration: 1500,
+          easing: ANIMATION_EASING.DOPAMINE_EASING_OUT_CUBIC,
+          useNativeDriver: true,
+        }),
+        Animated.timing(playButtonBounceAnim, {
+          toValue: 1.0,
+          duration: 1500,
+          easing: ANIMATION_EASING.DOPAMINE_EASING_OUT_CUBIC,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    microBounce.start();
+    // === EASING FIX END ===
 
     let dailyRewardTimer = null;
     let mounted = true;
@@ -146,51 +241,75 @@ const MenuScreen = React.memo(({ navigation, playerData: propPlayerData, onUpdat
     const result = await adService.showRewardedAd('daily_reward');
     if (result.success) {
       const bonus = { xp: 100, coins: 50 };
-      const newData = {
-        ...playerData,
-        xp: playerData.xp + bonus.xp,
-        coins: playerData.coins + bonus.coins,
-      };
       
-      await storageService.setItem('playerData', newData);
+      console.log('🎁 DAILY REWARD - Claiming reward:');
+      console.log('  XP Bonus:', bonus.xp);
+      console.log('  Coins Bonus:', bonus.coins);
+      console.log('  Current Player Data:', {
+        xp: playerData?.xp,
+        totalXp: playerData?.totalXp,
+        level: playerData?.level,
+        coins: playerData?.coins,
+      });
+      
+      // Save last claim time
       await storageService.setItem('lastDailyReward', Date.now());
       
-      // ✅ Use updatePlayerData wrapper (includes globalState.updatePlayerData or onUpdateData fallback)
-      await updatePlayerData(newData);
+      // CRITICAL FIX: Use addXP to properly save XP with all progression fields
+      console.log('🎁 DAILY REWARD - Adding XP:', bonus.xp);
+      const xpSuccess = await addXP(bonus.xp);
+      console.log('  XP Save Result:', xpSuccess ? '✅ Success' : '❌ Failed');
+      
+      // CRITICAL FIX: Use addCoins to properly save coins
+      console.log('🎁 DAILY REWARD - Adding Coins:', bonus.coins);
+      const coinsSuccess = await addCoins(bonus.coins);
+      console.log('  Coins Save Result:', coinsSuccess ? '✅ Success' : '❌ Failed');
+      
+      // Verify save worked
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const STORAGE_KEY = '@reflexion_player_data';
+        const verification = await AsyncStorage.getItem(STORAGE_KEY);
+        if (verification) {
+          const verified = JSON.parse(verification);
+          console.log('🎁 DAILY REWARD - Verification:');
+          console.log('  Total XP:', verified.totalXp);
+          console.log('  Level:', verified.level);
+          console.log('  Coins:', verified.coins);
+        }
+      } catch (verifyError) {
+        console.warn('⚠️ Could not verify daily reward save:', verifyError);
+      }
+      
       setDailyRewardClaimed(true);
       analytics.logRewardClaim('daily_reward', bonus.coins);
       
       setTimeout(() => setShowDailyReward(false), 2000);
     }
-  }, [playerData, updatePlayerData]);
+  }, [playerData, addXP, addCoins]);
 
-  // CRITICAL FIX: Use same level calculation as GameScreen to prevent NaN
-  const level = useMemo(() => {
-    if (!playerData || playerData.xp === undefined || playerData.xp === null) {
-      return 1; // Default to level 1 if XP not available
+  // CRITICAL FIX: Use single source of truth for player progress
+  const playerProgress = useMemo(() => {
+    if (!playerData || playerData.xp === undefined) {
+      return { level: 1, currentXp: 0, xpToNextLevel: 100, totalXp: 0 };
     }
-    return getLevelFromXP(playerData.xp);
+    const { getPlayerProgress } = require('../utils/GameLogic');
+    return getPlayerProgress(playerData.xp || 0);
   }, [playerData]);
   
-  // CRITICAL FIX: Calculate XP progress using proper XP system
+  const level = playerProgress.level;
+  
+  // CRITICAL FIX: Calculate progress bar from currentXp / xpToNextLevel (not hardcoded)
   const xpProgress = useMemo(() => {
-    if (!playerData || playerData.xp === undefined || playerData.xp === null) {
-      return 0;
-    }
-    const currentLevel = getLevelFromXP(playerData.xp);
-    const progress = getXPProgress(playerData.xp, currentLevel);
-    
-    // CRITICAL FIX: Format percentage to max 1 decimal place (e.g., 90.6% instead of 90.60000000000001%)
-    // Round to 1 decimal place and clamp to 0-100
-    const formattedProgress = Math.min(100, Math.max(0, Math.round(progress * 10) / 10));
-    
-    return formattedProgress;
-  }, [playerData]);
+    if (playerProgress.xpToNextLevel === 0) return 100;
+    const progress = (playerProgress.currentXp / playerProgress.xpToNextLevel) * 100;
+    return Math.min(100, Math.max(0, Math.round(progress * 10) / 10));
+  }, [playerProgress]);
 
   const handleButtonPress = useCallback((action) => {
-    // CRITICAL FIX: Play sound on button press
-    soundManager.play('tap').catch(error => {
-      console.warn('⚠️ Button sound failed:', error);
+    // ✅ SAFE: Sound with error handling
+    soundManager.play('tap').catch(err => {
+      console.warn('⚠️ Sound failed:', err);
     });
     
     Animated.sequence([
@@ -209,15 +328,15 @@ const MenuScreen = React.memo(({ navigation, playerData: propPlayerData, onUpdat
     setTimeout(() => {
       if (action === 'play') {
         setShowModeSelector(true);
-      } else if (action === 'zen') {
-        // CRITICAL FIX: Check if Zen mode is unlocked before navigating
-        if (isModeUnlocked(GAME_MODES.ZEN, level)) {
-          navigation.navigate('Game', { mode: GAME_MODES.ZEN });
+      } else if (action === 'speed') {
+        // CRITICAL FIX: Check if Speed Test mode is unlocked, then show target count selector
+        if (isModeUnlocked(GAME_MODES.SPEED_TEST, level)) {
+          setShowSpeedTestSelector(true);
         } else {
-          const unlockLevel = getModeUnlockLevel(GAME_MODES.ZEN);
+          const unlockLevel = getModeUnlockLevel(GAME_MODES.SPEED_TEST);
           Alert.alert(
-            '🔒 Zen Mode Locked',
-            `Reach Level ${unlockLevel} to unlock Zen Mode.`,
+            '🔒 Speed Test Locked',
+            `Reach Level ${unlockLevel} to unlock Speed Test Mode.`,
             [{ text: 'OK' }]
           );
         }
@@ -283,43 +402,59 @@ const MenuScreen = React.memo(({ navigation, playerData: propPlayerData, onUpdat
       </Animated.View>
 
       <View style={styles.menuContainer}>
+        {/* VISUAL UPGRADE: Play button - dominant CTA with breathing glow and micro-bounce */}
+        <Animated.View
+          style={{
+            transform: [{ scale: playButtonBounceAnim }],
+          }}
+        >
+          <Pressable
+            style={({ pressed }) => [
+              styles.gameModeButton,
+              styles.playButton,
+              pressed && styles.buttonPressed,
+            ]}
+            onPress={() => handleButtonPress('play')}
+          >
+            <Animated.View
+              style={[
+                styles.buttonGlow,
+                {
+                  opacity: playButtonGlowAnim,
+                },
+              ]}
+            />
+            <Text style={styles.buttonIcon}>▶️</Text>
+            <Text style={[styles.buttonText, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>Play</Text>
+          </Pressable>
+        </Animated.View>
+
+        {/* VISUAL UPGRADE: Speed Test - visually demoted */}
         <Pressable
           style={({ pressed }) => [
             styles.gameModeButton,
-            styles.playButton,
+            styles.secondaryModeButton,
+            styles.speedButton,
             pressed && styles.buttonPressed,
           ]}
-          onPress={() => handleButtonPress('play')}
+          onPress={() => handleButtonPress('speed')}
         >
-          <Text style={styles.buttonIcon}>⚡</Text>
-          <Text style={[styles.buttonText, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>Play</Text>
-          <View style={styles.buttonGlow} />
+          <Text style={styles.secondaryButtonIcon}>⏱️</Text>
+          <Text style={[styles.secondaryButtonText, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>Speed Test</Text>
         </Pressable>
 
+        {/* VISUAL UPGRADE: Rush Mode - visually demoted */}
         <Pressable
           style={({ pressed }) => [
             styles.gameModeButton,
-            styles.zenButton,
-            pressed && styles.buttonPressed,
-          ]}
-          onPress={() => handleButtonPress('zen')}
-        >
-          <Text style={styles.buttonIcon}>🧠</Text>
-          <Text style={[styles.buttonText, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>Zen Mode</Text>
-          <View style={styles.buttonGlow} />
-        </Pressable>
-
-        <Pressable
-          style={({ pressed }) => [
-            styles.gameModeButton,
+            styles.secondaryModeButton,
             styles.rushButton,
             pressed && styles.buttonPressed,
           ]}
           onPress={() => handleButtonPress('rush')}
         >
-          <Text style={styles.buttonIcon}>💥</Text>
-          <Text style={[styles.buttonText, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>Rush Mode</Text>
-          <View style={styles.buttonGlow} />
+          <Text style={styles.secondaryButtonIcon}>💥</Text>
+          <Text style={[styles.secondaryButtonText, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>Rush Mode</Text>
         </Pressable>
       </View>
 
@@ -479,6 +614,76 @@ const MenuScreen = React.memo(({ navigation, playerData: propPlayerData, onUpdat
         onSelectMode={handleModeSelect}
         playerLevel={level}
       />
+      
+      {/* Speed Test Target Count Selector Modal */}
+      <Modal visible={showSpeedTestSelector} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={[styles.modalTitle, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>
+              ⏱️ Speed Test
+            </Text>
+            <Text style={styles.modalSubtitle}>Select Target Count</Text>
+            
+            <View style={styles.targetCountContainer}>
+              {GAME_CONSTANTS.SPEED_TEST_TARGET_COUNTS.map((count) => {
+                const isUnlocked = isSpeedTestTargetCountUnlocked(count, level);
+                const unlockLevel = getSpeedTestTargetCountUnlockLevel(count);
+                
+                return (
+                  <Pressable
+                    key={count}
+                    style={[
+                      styles.targetCountButton,
+                      !isUnlocked && styles.targetCountButtonLocked,
+                    ]}
+                    onPress={() => {
+                      if (isUnlocked) {
+                        soundManager.play('tap').catch(() => {});
+                        // CRITICAL FIX: Navigate directly without delay or modal closing
+                        // This prevents menu screen flash and ensures immediate navigation
+                        navigation.navigate('Game', { 
+                          mode: GAME_MODES.SPEED_TEST,
+                          targetCount: count,
+                        });
+                        // Close modal after navigation starts
+                        setShowSpeedTestSelector(false);
+                      } else {
+                        Alert.alert(
+                          '🔒 Locked',
+                          `Reach Level ${unlockLevel} to unlock ${count} targets.`,
+                          [{ text: 'OK' }]
+                        );
+                      }
+                    }}
+                    disabled={!isUnlocked}
+                  >
+                    <Text style={[styles.targetCountText, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>
+                      {count} Targets
+                    </Text>
+                    {!isUnlocked && (
+                      <Text style={styles.targetCountLockText}>
+                        Level {unlockLevel}
+                      </Text>
+                    )}
+                  </Pressable>
+                );
+              })}
+            </View>
+            
+            <Pressable
+              style={styles.modalCloseButton}
+              onPress={() => {
+                soundManager.play('tap');
+                setShowSpeedTestSelector(false);
+              }}
+            >
+              <Text style={[styles.modalCloseButtonText, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>
+                Cancel
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 });
@@ -487,21 +692,21 @@ MenuScreen.displayName = 'MenuScreen';
 
 export default MenuScreen;
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   container: {
     flex: 1,
     backgroundColor: '#0a0a1a',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: SPACING.SCREEN_PADDING,
   },
   settingsButton: {
     position: 'absolute',
-    top: 60,
-    right: 20,
+    top: SPACING.SAFE_AREA_TOP + SPACING.MD,
+    right: SPACING.SCREEN_PADDING,
     width: 50,
     height: 50,
-    borderRadius: 25,
+    borderRadius: BORDER_RADIUS.ROUND,
     backgroundColor: 'rgba(197, 108, 240, 0.2)',
     borderWidth: 2,
     borderColor: '#C56CF0',
@@ -518,8 +723,8 @@ const styles = StyleSheet.create({
   },
   titleContainer: {
     alignItems: 'center',
-    marginBottom: 50,
-    marginTop: 80,
+    marginBottom: SPACING.XXL,
+    marginTop: SPACING.SAFE_AREA_TOP + SPACING.XL,
   },
   title: {
     color: '#4ECDC4',
@@ -543,12 +748,11 @@ const styles = StyleSheet.create({
   menuContainer: {
     width: '100%',
     maxWidth: 400,
-    gap: 20,
-    marginBottom: 20,
+    gap: SPACING.XL, // VISUAL UPGRADE: Increased spacing between UI blocks
+    marginBottom: SPACING.XL, // VISUAL UPGRADE: Increased bottom margin
   },
   gameModeButton: {
-    height: 80,
-    borderRadius: 20,
+    borderRadius: BORDER_RADIUS.LG, // VISUAL UPGRADE: Normalized border radius
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
@@ -559,19 +763,25 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   playButton: {
-    backgroundColor: 'rgba(78, 205, 196, 0.2)',
+    // VISUAL UPGRADE: Dominant CTA - larger size
+    height: SPACING.BUTTON_HEIGHT + SPACING.LG,
+    backgroundColor: 'rgba(78, 205, 196, 0.25)',
     borderColor: '#4ECDC4',
     shadowColor: '#4ECDC4',
   },
-  zenButton: {
-    backgroundColor: 'rgba(197, 108, 240, 0.2)',
-    borderColor: '#C56CF0',
-    shadowColor: '#C56CF0',
+  secondaryModeButton: {
+    // VISUAL UPGRADE: Demoted secondary modes - smaller size
+    height: SPACING.BUTTON_HEIGHT_COMPACT + SPACING.SM,
+    backgroundColor: 'rgba(77, 208, 225, 0.15)',
+    borderWidth: 1.5,
+  },
+  speedButton: {
+    borderColor: '#6B9BD1', // VISUAL UPGRADE: Ice-Blue / Steel gray for Speed Test
+    shadowColor: '#6B9BD1',
   },
   rushButton: {
-    backgroundColor: 'rgba(255, 107, 157, 0.2)',
-    borderColor: '#FF6B9D',
-    shadowColor: '#FF6B9D',
+    borderColor: '#FF6B35', // VISUAL UPGRADE: Energy Neon Red/Orange for Rush
+    shadowColor: '#FF6B35',
   },
   buttonPressed: {
     transform: [{ scale: 0.95 }],
@@ -580,33 +790,46 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: '100%',
     height: '100%',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 18,
+    backgroundColor: 'rgba(78, 205, 196, 0.3)', // VISUAL UPGRADE: Theme-matched glow color
+    borderRadius: BORDER_RADIUS.LG, // VISUAL UPGRADE: Normalized border radius
   },
   buttonIcon: {
-    fontSize: 32,
+    fontSize: 36, // VISUAL UPGRADE: Larger icon for Play button
     marginBottom: 5,
   },
   buttonText: {
     color: '#FFFFFF',
-    fontSize: 20,
+    fontSize: 22, // VISUAL UPGRADE: Larger text for Play button
     fontWeight: 'bold',
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 5,
+  },
+  // VISUAL UPGRADE: Secondary mode button text styling (demoted)
+  secondaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16, // Smaller than Play button
+    fontWeight: '600',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  secondaryButtonIcon: {
+    fontSize: 24, // Smaller than Play button icon
+    marginBottom: 4,
   },
   secondaryButtonsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
     maxWidth: 400,
-    marginBottom: 30,
-    gap: 10,
+    marginBottom: SPACING.XL,
+    gap: SPACING.SM,
   },
   secondaryButton: {
     flex: 1,
-    height: 60,
-    borderRadius: 15,
+    height: SPACING.BUTTON_HEIGHT_COMPACT + SPACING.SM,
+    borderRadius: BORDER_RADIUS.MD,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(78, 205, 196, 0.15)',
@@ -628,15 +851,15 @@ const styles = StyleSheet.create({
   },
   statsBar: {
     position: 'absolute',
-    bottom: 30,
-    left: 20,
-    right: 20,
+    bottom: SPACING.SAFE_AREA_BOTTOM + SPACING.XL,
+    left: SPACING.SCREEN_PADDING,
+    right: SPACING.SCREEN_PADDING,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: 'rgba(44, 62, 80, 0.8)',
-    borderRadius: 15,
-    padding: 15,
+    borderRadius: BORDER_RADIUS.MD,
+    padding: SPACING.MD,
     shadowColor: '#4ECDC4',
     shadowOpacity: 0.3,
     shadowRadius: 20,
@@ -657,7 +880,7 @@ const styles = StyleSheet.create({
   },
   xpContainer: {
     flex: 1,
-    marginLeft: 15,
+    marginLeft: SPACING.MD,
     alignItems: 'flex-end',
   },
   xpBar: {
@@ -688,8 +911,8 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#2C3E50',
-    borderRadius: 20,
-    padding: 30,
+    borderRadius: BORDER_RADIUS.MODAL,
+    padding: SPACING.XL,
     width: '85%',
     maxWidth: 400,
     shadowColor: '#4ECDC4',
@@ -731,8 +954,8 @@ const styles = StyleSheet.create({
   },
   adButton: {
     backgroundColor: '#FFD93D',
-    paddingVertical: 15,
-    borderRadius: 10,
+    paddingVertical: SPACING.MD,
+    borderRadius: BORDER_RADIUS.SM,
     alignItems: 'center',
     marginTop: 10,
     shadowColor: '#FFD93D',
@@ -749,8 +972,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     borderWidth: 2,
     borderColor: '#7F8C8D',
-    paddingVertical: 12,
-    borderRadius: 10,
+    paddingVertical: SPACING.SM + SPACING.XS,
+    borderRadius: BORDER_RADIUS.SM,
     alignItems: 'center',
     marginTop: 10,
   },
@@ -818,6 +1041,76 @@ const styles = StyleSheet.create({
   newBadgeText: {
     color: '#FFF',
     fontSize: 8,
+    fontWeight: 'bold',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#2C3E50',
+    borderRadius: 20,
+    padding: 30,
+    width: '85%',
+    maxWidth: 400,
+    shadowColor: '#4ECDC4',
+    shadowOpacity: 0.5,
+    shadowRadius: 40,
+    elevation: 20,
+  },
+  modalTitle: {
+    color: '#4ECDC4',
+    fontSize: 32,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  modalSubtitle: {
+    color: '#BDC3C7',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  targetCountContainer: {
+    gap: 12,
+    marginBottom: 20,
+  },
+  targetCountButton: {
+    backgroundColor: 'rgba(78, 205, 196, 0.2)',
+    borderWidth: 2,
+    borderColor: '#4ECDC4',
+    borderRadius: 12,
+    padding: 20,
+    alignItems: 'center',
+  },
+  targetCountButtonLocked: {
+    backgroundColor: 'rgba(44, 62, 80, 0.5)',
+    borderColor: '#666',
+    opacity: 0.6,
+  },
+  targetCountText: {
+    color: '#4ECDC4',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  targetCountLockText: {
+    color: '#999',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  modalCloseButton: {
+    backgroundColor: 'rgba(255, 107, 157, 0.2)',
+    borderWidth: 2,
+    borderColor: '#FF6B9D',
+    borderRadius: 12,
+    padding: 15,
+    alignItems: 'center',
+  },
+  modalCloseButtonText: {
+    color: '#FF6B9D',
+    fontSize: 18,
     fontWeight: 'bold',
   },
 });

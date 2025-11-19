@@ -1,80 +1,95 @@
+/**
+ * REFLEXION v6.0 - SETTINGS SERVICE
+ * ✅ Safe initialization with defaults
+ * ✅ Never returns undefined
+ * ✅ Auto-recovery from corruption
+ * ✅ Subscriber pattern for live updates
+ */
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-/**
- * SettingsService - Manages app-wide settings
- * ✅ FIX: Safe initialization with default values
- * ✅ FIX: All methods check initialization state
- */
+const STORAGE_KEY = '@reflexion_settings';
+
+const DEFAULT_SETTINGS = {
+  soundEnabled: true,
+  hapticsEnabled: true,
+  musicVolume: 1.0,
+  sfxVolume: 1.0,
+  theme: 'auto',
+  language: 'en',
+  notifications: true,
+};
+
 class SettingsService {
   constructor() {
-    // ✅ CRITICAL FIX: Always initialize with safe defaults
-    this.settings = {
-      soundEnabled: true,
-      hapticsEnabled: true,
-      musicVolume: 1.0,
-      sfxVolume: 1.0,
-      theme: 'auto',
-    };
+    // ✅ ALWAYS initialize with safe defaults
+    this.settings = { ...DEFAULT_SETTINGS };
     this.isInitialized = false;
     this.subscribers = [];
-    
-    // ✅ CRITICAL FIX: Auto-initialize on construction
+    this.initPromise = null;
+
+    // ✅ Auto-initialize in background
     this._autoInitialize();
   }
 
   /**
-   * ✅ CRITICAL FIX: Automatic initialization without await
+   * ✅ Background initialization (non-blocking)
    */
   _autoInitialize() {
-    // Run initialization in background, don't block constructor
     this.initialize().catch(error => {
-      console.warn('⚠️ Auto-initialization failed, using defaults:', error);
+      console.warn('⚠️ Settings auto-init failed, using defaults:', error);
     });
   }
 
+  /**
+   * Initialize from storage
+   */
   async initialize() {
+    // ✅ Prevent concurrent initializations
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+
     if (this.isInitialized) {
       console.log('📄 SettingsService already initialized');
-      return;
+      return Promise.resolve();
     }
 
-    try {
-      const savedData = await AsyncStorage.getItem('settings');
-      if (savedData) {
-        const saved = JSON.parse(savedData);
-        if (saved && typeof saved === 'object') {
-          // ✅ CRITICAL FIX: Merge with defaults to ensure all keys exist
-          this.settings = { ...this.settings, ...saved };
+    this.initPromise = (async () => {
+      try {
+        const savedData = await AsyncStorage.getItem(STORAGE_KEY);
+        if (savedData) {
+          const saved = JSON.parse(savedData);
+          if (saved && typeof saved === 'object') {
+            // ✅ Merge with defaults to ensure all keys exist
+            this.settings = { ...DEFAULT_SETTINGS, ...saved };
+          }
         }
-      }
 
-      this.isInitialized = true;
-      console.log('✅ SettingsService initialized:', this.settings);
-    } catch (error) {
-      console.error('❌ SettingsService initialization failed:', error);
-      // ✅ CRITICAL FIX: Set initialized anyway with defaults
-      this.isInitialized = true;
-    }
+        this.isInitialized = true;
+        console.log('✅ SettingsService initialized:', this.settings);
+      } catch (error) {
+        console.error('❌ SettingsService init failed:', error);
+        // ✅ Use defaults on error
+        this.settings = { ...DEFAULT_SETTINGS };
+        this.isInitialized = true;
+      }
+    })();
+
+    return this.initPromise;
   }
 
   /**
-   * ✅ CRITICAL FIX: SAFE get() method - NEVER returns undefined
-   * Always returns valid settings object even before initialization
+   * ✅ CRITICAL: SAFE get() - NEVER returns undefined
    */
   get() {
-    // ✅ CRITICAL FIX: Always return a valid object, never undefined
+    // ✅ Always return valid object
     if (!this.settings || typeof this.settings !== 'object') {
       console.warn('⚠️ Settings corrupted, resetting to defaults');
-      this.settings = {
-        soundEnabled: true,
-        hapticsEnabled: true,
-        musicVolume: 1.0,
-        sfxVolume: 1.0,
-        theme: 'auto',
-      };
+      this.settings = { ...DEFAULT_SETTINGS };
     }
-    
-    // Return a copy to prevent external modifications
+
+    // Return copy to prevent external mutations
     return { ...this.settings };
   }
 
@@ -82,22 +97,49 @@ class SettingsService {
    * Update settings (partial)
    */
   async set(patch) {
-    // ✅ CRITICAL FIX: Ensure settings object exists
-    if (!this.settings) {
-      this.settings = this.get();
+    if (!patch || typeof patch !== 'object') {
+      console.warn('⚠️ Invalid settings patch');
+      return false;
     }
-    
-    this.settings = { ...this.settings, ...patch };
-    await this.save();
-    this.notify();
+
+    try {
+      this.settings = { ...this.settings, ...patch };
+      await this.save();
+      this.notify();
+      return true;
+    } catch (error) {
+      console.error('❌ Failed to set settings:', error);
+      return false;
+    }
   }
 
   /**
-   * Subscribe to settings changes
-   * @param {Function} callback - Called with updated settings
-   * @returns {Function} Unsubscribe function
+   * Save to storage
+   */
+  async save() {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(this.settings));
+    } catch (error) {
+      console.warn('⚠️ Failed to save settings:', error);
+    }
+  }
+
+  /**
+   * Reset to defaults
+   */
+  async reset() {
+    this.settings = { ...DEFAULT_SETTINGS };
+    await this.save();
+    this.notify();
+    console.log('✅ Settings reset to defaults');
+  }
+
+  /**
+   * Subscribe to changes
    */
   subscribe(callback) {
+    if (typeof callback !== 'function') return () => {};
+
     this.subscribers.push(callback);
     return () => {
       this.subscribers = this.subscribers.filter(cb => cb !== callback);
@@ -105,7 +147,7 @@ class SettingsService {
   }
 
   /**
-   * Notify all subscribers
+   * Notify subscribers
    */
   notify() {
     const currentSettings = this.get();
@@ -113,14 +155,12 @@ class SettingsService {
       try {
         cb(currentSettings);
       } catch (error) {
-        console.error('❌ Subscriber callback error:', error);
+        console.error('❌ Subscriber error:', error);
       }
     });
   }
 
-  /**
-   * ✅ SAFE getters - never throw errors
-   */
+  // ✅ SAFE GETTERS (never throw)
   getSoundEnabled() {
     return this.get().soundEnabled ?? true;
   }
@@ -141,53 +181,30 @@ class SettingsService {
     return this.get().theme || 'auto';
   }
 
-  /**
-   * Safe setters
-   */
+  // ✅ SAFE SETTERS
   async setSoundEnabled(enabled) {
-    await this.set({ soundEnabled: !!enabled });
+    return await this.set({ soundEnabled: !!enabled });
   }
 
   async setHapticsEnabled(enabled) {
-    await this.set({ hapticsEnabled: !!enabled });
+    return await this.set({ hapticsEnabled: !!enabled });
   }
 
   async setMusicVolume(volume) {
-    await this.set({ musicVolume: Math.max(0, Math.min(1, volume)) });
+    return await this.set({ musicVolume: Math.max(0, Math.min(1, volume)) });
   }
 
   async setSfxVolume(volume) {
-    await this.set({ sfxVolume: Math.max(0, Math.min(1, volume)) });
+    return await this.set({ sfxVolume: Math.max(0, Math.min(1, volume)) });
   }
 
   async setTheme(theme) {
-    await this.set({ theme });
-  }
-
-  async save() {
-    try {
-      await AsyncStorage.setItem('settings', JSON.stringify(this.settings));
-    } catch (error) {
-      console.warn('⚠️ Failed to save settings:', error);
-    }
-  }
-
-  async reset() {
-    this.settings = {
-      soundEnabled: true,
-      hapticsEnabled: true,
-      musicVolume: 1.0,
-      sfxVolume: 1.0,
-      theme: 'auto',
-    };
-    await this.save();
-    this.notify();
+    return await this.set({ theme });
   }
 }
 
-// ✅ CRITICAL FIX: Create singleton instance immediately
+// ✅ Create singleton
 const settingsService = new SettingsService();
 
-// ✅ CRITICAL FIX: Export both default and named
-export default settingsService;
-export { settingsService };
+// ✅ CRITICAL FIX: NAMED EXPORT ONLY (no default export to prevent Metro bundler issues)
+export { settingsService, DEFAULT_SETTINGS };

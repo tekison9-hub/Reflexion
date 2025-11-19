@@ -3,11 +3,12 @@ import {
   View,
   Text,
   TouchableOpacity,
-  StyleSheet,
   ScrollView,
   Dimensions,
 } from 'react-native';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { SPACING, BORDER_RADIUS } from '../utils/layoutConstants';
 
 export default function InstructionsScreen({ navigation }) {
   // SAFE DIMENSIONS PATTERN
@@ -93,7 +94,7 @@ export default function InstructionsScreen({ navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   container: {
     flex: 1,
     backgroundColor: '#1a1a2e',
@@ -101,8 +102,8 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
+    paddingHorizontal: SPACING.SCREEN_PADDING,
+    paddingVertical: SPACING.MD,
   },
   backButton: {
     marginRight: 15,
@@ -124,14 +125,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingHorizontal: SPACING.SCREEN_PADDING,
+    paddingBottom: SPACING.LG,
   },
   instructionBlock: {
     backgroundColor: 'rgba(44, 62, 80, 0.6)',
-    borderRadius: 15,
-    padding: 20,
-    marginBottom: 15,
+    borderRadius: BORDER_RADIUS.MD,
+    padding: SPACING.LG,
+    marginBottom: SPACING.MD,
     alignItems: 'center',
     borderWidth: 2,
     borderColor: 'rgba(78, 205, 196, 0.2)',
@@ -155,8 +156,8 @@ const styles = StyleSheet.create({
   },
   startButton: {
     backgroundColor: '#FF6B6B',
-    paddingVertical: 18,
-    borderRadius: 15,
+    paddingVertical: SPACING.LG + SPACING.XS,
+    borderRadius: BORDER_RADIUS.MD,
     alignItems: 'center',
     marginTop: 10,
     shadowColor: '#FF6B6B',

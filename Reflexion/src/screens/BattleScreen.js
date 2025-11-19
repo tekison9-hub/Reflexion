@@ -15,14 +15,15 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { 
   View, 
   Text, 
   TouchableOpacity, 
-  StyleSheet, 
   Dimensions,
   Animated,
   Alert,
+  StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -1110,7 +1111,7 @@ export default function BattleScreen({ navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   safeArea: {
     flex: 1,
   },

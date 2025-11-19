@@ -3,12 +3,13 @@ import {
   View,
   Text,
   TouchableOpacity,
-  StyleSheet,
   Dimensions,
   Modal,
   Animated,
   Share,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
@@ -39,6 +40,10 @@ import {
   getLevelFromXP,
   calculateComboBonusXP,
   THEMES,
+  // ✅ TASK 1: Speed Test helpers
+  getSpeedTestSpawnCount,
+  calculateSpeedTestRank,
+  formatTime,
 } from '../utils/GameLogic';
 import NeonTarget from '../components/NeonTarget';
 import Particle from '../components/Particle';
@@ -46,18 +51,135 @@ import FloatingScore from '../components/FloatingScore';
 import ComboBar from '../components/ComboBar';
 import PowerBar from '../components/PowerBar';
 import { ShareCard } from '../components/ShareCard';
+import themeService from '../services/ThemeService';
+import { COMBO_ANIMATION_CONFIG, ANIMATION_EASING } from '../utils/animationConstants';
+import leaderboardManager from '../services/LeaderboardManager';
+import { debugEvents } from '../utils/debugLog';
+import { useTheme } from '../contexts/ThemeContext';
+import { useFocusEffect } from '@react-navigation/native';
+import { ESPORTS_DARK_BACKGROUNDS } from '../utils/themeTokens';
 
 export default function GameScreen({ navigation, route, playerData: propPlayerData, onUpdateData }) {
+  // 🔴 SAFE_EMOJI_PATCH: Applied safe emoji access pattern throughout
+  console.log("SAFE_EMOJI_PATCH_APPLIED");
+  
   const { playerData: globalPlayerData, updatePlayerData, addCoins, addXP } = useGlobalState();
+  const { themeData: globalThemeData } = useTheme(); // CRITICAL FIX: Use global theme
   const playerData = globalPlayerData || propPlayerData;
   // Get game mode from route params (default to Classic)
   const gameMode = route?.params?.mode || GAME_MODES.CLASSIC;
+  // Get Speed Test target count from route params (default to 50)
+  const speedTestTargetCount = route?.params?.targetCount || GAME_CONSTANTS.SPEED_TOTAL_TARGETS;
   
   // Get player level using new XP system
-  const playerLevel = getLevelFromXP(playerData.xp);
+  // CRITICAL FIX: Add optional chaining to prevent error if playerData is undefined or missing totalXp
+  const playerLevel = getLevelFromXP(playerData?.xp ?? playerData?.totalXp ?? 0);
   
-  const [currentTheme, setCurrentTheme] = useState(getThemeForLevel(playerLevel));
+  // 🔴 BUG #1 FIX: Use global theme from ThemeContext, fallback to level-based theme
+  // Defensive: Ensure we always have a valid theme object
+  const getDefaultTheme = useCallback(() => {
+    try {
+      return getThemeForLevel(playerLevel);
+    } catch (error) {
+      console.warn('⚠️ Failed to get default theme, using fallback');
+      return THEMES.NEON_CITY || {
+        name: 'Neon City',
+        primaryColor: '#4ECDC4',
+        secondaryColor: '#C56CF0',
+        backgroundColor: '#0a0a1a',
+        gradientColors: ['#1a1a2e', '#16213e'],
+        particleColors: ['#4ECDC4', '#00D9FF', '#00FFE5'],
+      };
+    }
+  }, [playerLevel]);
+
+  const [currentTheme, setCurrentTheme] = useState(() => {
+    try {
+      // 🔴 CRITICAL FIX: Check for accentColor OR primaryColor (premium tokens use accentColor)
+      if (globalThemeData && globalThemeData.name && (globalThemeData.accentColor || globalThemeData.primaryColor)) {
+        console.log('🎨 GameScreen - Initial theme from globalThemeData:', globalThemeData.name);
+        return globalThemeData;
+      }
+      const defaultTheme = getDefaultTheme();
+      console.log('🎨 GameScreen - Using default theme:', defaultTheme.name);
+      return defaultTheme;
+    } catch (error) {
+      console.warn('⚠️ Error initializing theme, using default');
+      return getDefaultTheme();
+    }
+  });
   const [activeBallEmoji, setActiveBallEmoji] = useState('⚪');
+  const [activeParticleEmoji, setActiveParticleEmoji] = useState(null); // 🔴 PARTICLE FIX: Store active particle emoji
+  
+  // 🔴 CRITICAL FIX: Update theme when globalThemeData changes (when theme is selected in shop)
+  // CRITICAL: This must run whenever globalThemeData changes to ensure visuals update
+  // Single source of truth: globalThemeData from ThemeContext takes priority
+  useEffect(() => {
+    try {
+      // 🔴 CRITICAL FIX: Check for accentColor OR primaryColor (premium tokens use accentColor)
+      if (globalThemeData && globalThemeData.name && (globalThemeData.accentColor || globalThemeData.primaryColor)) {
+        console.log('🎨 PREMIUM THEME - globalThemeData changed:', globalThemeData.name);
+        console.log('   Theme ID:', globalThemeData.id);
+        console.log('   Accent Color:', globalThemeData.accentColor || globalThemeData.primaryColor);
+        console.log('   Background:', globalThemeData.backgroundColor);
+        console.log('   Gradient Colors:', globalThemeData.gradientColors);
+        console.log('   Particle Colors:', globalThemeData.particleColors);
+        
+        // 🔴 CRITICAL FIX: Always create a NEW object reference to force React re-render
+        // This ensures React detects the state change and triggers a re-render
+        // 🎨 PREMIUM ESPORTS: Preserve all premium token properties
+        const updatedTheme = {
+          ...globalThemeData, // Preserve all premium token properties
+          id: globalThemeData.id || 'theme_default',
+          name: globalThemeData.name || 'Classic Dark',
+          // Support both new token structure and legacy
+          accentColor: globalThemeData.accentColor || globalThemeData.primaryColor || '#00E5FF',
+          primaryColor: globalThemeData.accentColor || globalThemeData.primaryColor || '#00E5FF', // Legacy support
+          secondaryAccent: globalThemeData.secondaryAccent || globalThemeData.secondaryColor || '#FF6B9D',
+          secondaryColor: globalThemeData.secondaryAccent || globalThemeData.secondaryColor || '#FF6B9D', // Legacy support
+          backgroundColor: globalThemeData.backgroundColor || '#05070D',
+          gradientColors: Array.isArray(globalThemeData.gradientColors) && globalThemeData.gradientColors.length > 0
+            ? [...globalThemeData.gradientColors] // Create new array reference
+            : ['#0A0F1A', '#1a1a2e'],
+          particleColors: Array.isArray(globalThemeData.particleColors) && globalThemeData.particleColors.length > 0
+            ? [...globalThemeData.particleColors] // Create new array reference
+            : ['#00E5FF', '#4ECDC4', '#00D9FF'],
+        };
+        
+        // 🔴 CRITICAL FIX: Always update state with new object reference (forces re-render)
+        setCurrentTheme(updatedTheme);
+        console.log('✅ PREMIUM THEME - GameScreen currentTheme updated:', updatedTheme.name);
+        console.log('   Applied colors - Accent:', updatedTheme.accentColor, 'Background:', updatedTheme.backgroundColor);
+        console.log('   Gradient:', updatedTheme.gradientColors);
+      } else {
+        // 🔴 CRITICAL FIX: Log why theme update was skipped
+        if (!globalThemeData) {
+          console.warn('⚠️ Theme update skipped: globalThemeData is null/undefined');
+        } else if (!globalThemeData.name) {
+          console.warn('⚠️ Theme update skipped: globalThemeData.name is missing');
+        } else if (!globalThemeData.accentColor && !globalThemeData.primaryColor) {
+          console.warn('⚠️ Theme update skipped: No accentColor or primaryColor found');
+        }
+        
+        // Only fallback if currentTheme is also invalid
+        if (!currentTheme || (!currentTheme.name && !currentTheme.accentColor && !currentTheme.primaryColor)) {
+          console.warn('⚠️ Invalid theme data, using default');
+          setCurrentTheme(getDefaultTheme());
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error updating theme from globalThemeData:', error);
+      setCurrentTheme(getDefaultTheme());
+    }
+  }, [
+    globalThemeData?.id, // 🔴 CRITICAL: Use id to detect theme changes
+    globalThemeData?.name, 
+    globalThemeData?.accentColor || globalThemeData?.primaryColor, 
+    globalThemeData?.backgroundColor, 
+    globalThemeData?.gradientColors?.join(','), // Use join to detect array changes
+    globalThemeData?.particleColors?.join(','), // Use join to detect array changes
+    getDefaultTheme
+  ]);
   
   const [screenDimensions, setScreenDimensions] = useState({ width: 0, height: 0 });
   
@@ -74,10 +196,41 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
   const [maxCombo, setMaxCombo] = useState(0);
-  const [health, setHealth] = useState(GAME_CONSTANTS.MAX_HEALTH);
+  // Speed Test mode doesn't use health system
+  const [health, setHealth] = useState(
+    route?.params?.mode === GAME_MODES.SPEED_TEST 
+      ? GAME_CONSTANTS.MAX_HEALTH // Keep at max, but never displayed/used
+      : GAME_CONSTANTS.MAX_HEALTH
+  );
   const [timeLeft, setTimeLeft] = useState(getGameDuration(gameMode));
-  const [gameActive, setGameActive] = useState(true);
+  // CRITICAL FIX: Speed Test countdown - don't start game immediately
+  const [countdown, setCountdown] = useState(gameMode === GAME_MODES.SPEED_TEST ? 3 : null);
+  const [gameActive, setGameActive] = useState(gameMode !== GAME_MODES.SPEED_TEST); // Don't start active for Speed Test until countdown
+  
+  // CRITICAL FIX: Initialize countdown when entering Speed Test mode from menu
+  // This only runs when route params change (navigation from menu)
+  useEffect(() => {
+    if (gameMode === GAME_MODES.SPEED_TEST && !speedTestInitializedRef.current) {
+      console.log('✅ Speed Test mode detected - initializing countdown to 3');
+      setCountdown(3);
+      setGameActive(false);
+      setSpeedTestStartTime(0);
+      setSpeedTestElapsedTime(0);
+      setSpeedTestTargetsHit(0);
+      setSpeedTestCompleted(false);
+      speedTestInitializedRef.current = true;
+    } else if (gameMode !== GAME_MODES.SPEED_TEST) {
+      speedTestInitializedRef.current = false;
+    }
+  }, [route?.params?.mode, route?.params?.targetCount, gameMode]);
+  
   const [gameOver, setGameOver] = useState(false);
+  
+  // 🔴 RUSH MODE FIX: Sync gameOverRef with gameOver state
+  useEffect(() => {
+    gameOverRef.current = gameOver;
+  }, [gameOver]);
+  const [gameWon, setGameWon] = useState(false); // Track win/lose state
   const [earnedXP, setEarnedXP] = useState(0);
   const [earnedCoins, setEarnedCoins] = useState(0);
   const [showReviveOption, setShowReviveOption] = useState(false);
@@ -89,14 +242,35 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   const [rushComboMultiplier, setRushComboMultiplier] = useState(1); // Rush mode combo multiplier
   const [showThemeUnlock, setShowThemeUnlock] = useState(false);
   const [showShareCard, setShowShareCard] = useState(false);
+  
+  // CRITICAL FIX: Track if Speed Test has been initialized (prevents re-initialization loops)
+  const speedTestInitializedRef = useRef(false);
   const [avgReactionTime, setAvgReactionTime] = useState(0);
   const [unlockedTheme, setUnlockedTheme] = useState(null);
   const [shakeAnim] = useState(new Animated.Value(0));
   
-  const [speedTestTrials, setSpeedTestTrials] = useState(0);
-  const [speedTestTimes, setSpeedTestTimes] = useState([]);
-  const [speedTestTargetTime, setSpeedTestTargetTime] = useState(0);
-  const [speedTestWaiting, setSpeedTestWaiting] = useState(true);
+  // ✅ TASK 1: Speed Test (Time-Attack Mode) State
+  const [speedTestStartTime, setSpeedTestStartTime] = useState(0);
+  const [speedTestElapsedTime, setSpeedTestElapsedTime] = useState(0);
+  const [speedTestTargetsHit, setSpeedTestTargetsHit] = useState(0);
+  const [speedTestTargetsMissed, setSpeedTestTargetsMissed] = useState(0);
+  const [speedTestCompleted, setSpeedTestCompleted] = useState(false);
+  const [speedTestResultsVisible, setSpeedTestResultsVisible] = useState(false);
+  const [speedTestCanRestart, setSpeedTestCanRestart] = useState(false);
+  const speedTestTimerRef = useRef(null);
+  const speedTestSpawnTimerRef = useRef(null); // 🔴 SPEED TEST FIX: Spawn timer ref
+  const speedTestStartTimeRef = useRef(null); // 🔴 SPEED TEST FIX: Store start time in ref to avoid stale closures
+  const speedTestCompletedRef = useRef(false); // 🔴 SPEED TEST FIX: Store completion flag in ref to avoid stale closures
+  const speedTestTargetsLengthRef = useRef(0); // 🔴 SPEED TEST FIX: Store targets length in ref
+  // CRITICAL FIX: Use refs to prevent flicker and ensure state consistency
+  const speedTestHitCountRef = useRef(0);
+  const speedTestElapsedTimeRef = useRef(0); // Store timer value in ref to reduce re-renders
+  const speedTestTargetCountRef = useRef(speedTestTargetCount); // Capture target count in ref
+  const zenSpawnTimerRef = useRef(null);
+  // 🔴 TAP PIPELINE: Prevent overlapping async tap processing
+  const isProcessingTapRef = useRef(false);
+  // 🔴 CLEANUP: Guard against state updates after unmount
+  const isMountedRef = useRef(true);
 
   const spawnTimerRef = useRef(null);
   const gameTimerRef = useRef(null);
@@ -104,57 +278,313 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   const powerBarTimerRef = useRef(null);
   const powerBarActiveTimerRef = useRef(null);
   
+  // 🔴 BUG #2 FIX: RunId system to prevent stale callbacks
+  const runIdRef = useRef(0);
+  
+  // 🔴 RUSH MODE FIX: Game over ref to prevent stale closures
+  const gameOverRef = useRef(false);
+  
+  // 🔴 BUG #2 FIX: Revive protection window to prevent old targets from instantly killing player
+  const REVIVE_PROTECTION_DURATION_MS = 1000; // 1 second grace period after revive
+  const reviveProtectionUntilRef = useRef(null);
+  
   // CRITICAL FIX: Prevent game start spam (100+ logs)
   const gameStartLoggedRef = useRef(false);
+  
+  // 🔴 RUSH MODE FIX: Centralized safe health update function
+  // This ensures health is NEVER modified when it shouldn't be
+  const updateHealthSafe = useCallback((delta, reason = 'unknown', runId = null) => {
+    // 🔴 BUG #2 FIX: Use actual game mode for logging, not hardcoded [RUSH]
+    const modeTag = gameMode ? `[${gameMode.toUpperCase().replace('_', ' ')}]` : '[GAME]';
+    
+    // Guard 1: Check if game is over
+    if (gameOverRef.current) {
+      console.log(`${modeTag} Blocked health update: gameOver=true, reason=${reason}`);
+      return false;
+    }
+    
+    // Guard 2: Check if game is active
+    if (!gameActive) {
+      console.log(`${modeTag} Blocked health update: gameActive=false, reason=${reason}`);
+      return false;
+    }
+    
+    // Guard 3: Check runId if provided (for stale callback prevention)
+    if (runId !== null && runId !== runIdRef.current) {
+      console.log(`${modeTag} Blocked stale health update: runId mismatch (${runId} !== ${runIdRef.current}), reason=${reason}`);
+      return false;
+    }
+    
+    // Guard 4: Check revive protection window
+    const now = Date.now();
+    if (reviveProtectionUntilRef.current && now < reviveProtectionUntilRef.current) {
+      console.log(`${modeTag} Blocked health update: in revive protection window, reason=${reason}`);
+      return false;
+    }
+    
+    // Guard 5: Don't reduce health if already at 0
+    setHealth(prevHealth => {
+      if (prevHealth <= 0 && delta < 0) {
+        console.log(`${modeTag} Blocked health update: already at 0, reason=${reason}`);
+        return prevHealth;
+      }
+      
+      const newHealth = Math.max(0, Math.min(GAME_CONSTANTS.MAX_HEALTH, prevHealth + delta));
+      console.log(`${modeTag} Health update: ${prevHealth} → ${newHealth} (delta=${delta}, reason=${reason}, runId=${runIdRef.current})`);
+      return newHealth;
+    });
+    
+    return true;
+  }, [gameActive]);
 
   const gameAreaWidth = screenDimensions.width - 40;
   const gameAreaHeight = screenDimensions.height * 0.6;
 
+  // 🔴 BUG #1 FIX: Load active theme, particles, and balls from shop selection
   useEffect(() => {
     const loadActiveCosmetics = async () => {
       try {
+        // 🔴 CRITICAL FIX: If globalThemeData exists, use it directly (from ThemeContext)
+        // This ensures that when theme changes in shop, it's immediately reflected
+        // Check for accentColor OR primaryColor (premium tokens use accentColor)
+        if (globalThemeData && globalThemeData.name && (globalThemeData.accentColor || globalThemeData.primaryColor)) {
+          console.log('🎮 GameScreen - Using globalThemeData from ThemeContext:', globalThemeData.name);
+          // Load particles and balls, but use globalThemeData for theme
         const activeItemsData = await AsyncStorage.getItem('@active_items');
+          let activeParticleId = null;
+          let activeBallId = null;
+          
         if (activeItemsData) {
+            try {
           const activeItems = JSON.parse(activeItemsData);
-          const { getItemById } = require('../data/ShopItems');
-          
-          const activeThemeId = activeItems.themes;
-          if (activeThemeId) {
-            const themeItem = getItemById(activeThemeId);
-            if (themeItem && themeItem.colors) {
-              const shopTheme = {
-                name: themeItem.name,
-                backgroundColor: themeItem.colors.background[0] || '#1a1a2e',
-                gradientColors: themeItem.colors.background || ['#1a1a2e', '#16213e'],
-                primaryColor: themeItem.colors.primary || '#00E5FF',
-                secondaryColor: themeItem.colors.secondary || '#FF6B9D',
-                particleColors: [
-                  themeItem.colors.primary || '#00E5FF',
-                  themeItem.colors.secondary || '#FF6B9D',
-                  '#FFD93D',
-                ],
-              };
-              setCurrentTheme(shopTheme);
-              console.log(`🎨 Active theme loaded: ${themeItem.name}`);
+              activeParticleId = activeItems.particles;
+              activeBallId = activeItems.balls;
+              console.log('🎮 GameScreen - Active items loaded:', { 
+                particle: activeParticleId, 
+                ball: activeBallId 
+              });
+            } catch (parseError) {
+              console.warn('⚠️ Failed to parse active items:', parseError);
             }
           }
           
-          const activeBallId = activeItems.balls;
+          // 🔴 CRITICAL FIX: Use globalThemeData directly, but create new object reference
+          // This ensures React detects the change and triggers re-render
+          // Support both accentColor (premium) and primaryColor (legacy)
+          setCurrentTheme({
+            id: globalThemeData.id || 'theme_default',
+            name: globalThemeData.name,
+            accentColor: globalThemeData.accentColor || globalThemeData.primaryColor,
+            primaryColor: globalThemeData.accentColor || globalThemeData.primaryColor, // Legacy support
+            secondaryAccent: globalThemeData.secondaryAccent || globalThemeData.secondaryColor,
+            secondaryColor: globalThemeData.secondaryAccent || globalThemeData.secondaryColor, // Legacy support
+            backgroundColor: globalThemeData.backgroundColor || '#05070D',
+            gradientColors: Array.isArray(globalThemeData.gradientColors) && globalThemeData.gradientColors.length > 0
+              ? [...globalThemeData.gradientColors]
+              : ['#0A0F1A', '#1a1a2e'],
+            particleColors: Array.isArray(globalThemeData.particleColors) && globalThemeData.particleColors.length > 0
+              ? [...globalThemeData.particleColors]
+              : ['#00E5FF', '#4ECDC4', '#00D9FF'],
+          });
+          
+          // 🔴 PARTICLE FIX: Load active particle emoji
+          if (activeParticleId) {
+            try {
+              const { getItemById } = require('../data/ShopItems');
+              const particleItem = getItemById(activeParticleId);
+              if (particleItem) {
+                // 🔴 SAFE_EMOJI_PATCH: Never directly access emoji, always use safe fallback
+                const safeEmoji = particleItem?.emoji ?? particleItem?.icon ?? particleItem?.character ?? null;
+                setActiveParticleEmoji(safeEmoji);
+                console.log(`✨ GameScreen - Active particle: ${particleItem.name} (${safeEmoji || 'none'})`);
+              } else {
+                setActiveParticleEmoji(null);
+              }
+            } catch (error) {
+              console.warn('⚠️ Failed to load particle item:', error);
+              setActiveParticleEmoji(null);
+            }
+          } else {
+            setActiveParticleEmoji(null);
+          }
+          
           if (activeBallId) {
+            try {
+              const { getItemById } = require('../data/ShopItems');
             const ballItem = getItemById(activeBallId);
-            if (ballItem && ballItem.emoji) {
-              setActiveBallEmoji(ballItem.emoji);
-              console.log(`⚽ Active ball loaded: ${ballItem.name} ${ballItem.emoji}`);
+              if (ballItem) {
+                // 🔴 SAFE_EMOJI_PATCH: Never directly access emoji, always use safe fallback
+                const safeEmoji = ballItem?.emoji ?? ballItem?.icon ?? ballItem?.character ?? '⚪';
+                setActiveBallEmoji(safeEmoji);
+              }
+            } catch (error) {
+              console.warn('⚠️ Failed to load ball item:', error);
             }
           }
+          return; // Exit early - globalThemeData is the source of truth
+        }
+        
+        // Fallback: Load from ThemeService if globalThemeData not available
+        const activeThemeId = await themeService.getActiveTheme();
+        console.log('🎮 GameScreen - Loading active theme from ThemeService:', activeThemeId);
+        
+        // Use getThemeData to properly map theme IDs (handles 'theme_neon_city' format)
+        const { getThemeData } = require('../utils/GameLogic');
+        const themeObj = getThemeData(activeThemeId);
+        
+          if (themeObj) {
+          // Load active particles and balls from @active_items
+          const activeItemsData = await AsyncStorage.getItem('@active_items');
+          let activeParticleId = null;
+          let activeBallId = null;
+          
+          if (activeItemsData) {
+            try {
+              const activeItems = JSON.parse(activeItemsData);
+              activeParticleId = activeItems.particles;
+              activeBallId = activeItems.balls;
+              console.log('🎮 GameScreen - Active items:', { 
+                particle: activeParticleId, 
+                ball: activeBallId 
+              });
+            } catch (parseError) {
+              console.warn('⚠️ Failed to parse active items:', parseError);
+            }
+          }
+          
+          // 🔴 PARTICLE FIX: Load particle item to get emoji and colors
+          let particleColors = themeObj.particleColors; // Default to theme colors
+          if (activeParticleId) {
+            try {
+              const { getItemById } = require('../data/ShopItems');
+              const particleItem = getItemById(activeParticleId);
+              if (particleItem) {
+                // 🔴 SAFE_EMOJI_PATCH: Never directly access emoji, always use safe fallback
+                const safeEmoji = particleItem?.emoji ?? particleItem?.icon ?? particleItem?.character ?? null;
+                setActiveParticleEmoji(safeEmoji);
+                console.log(`✨ GameScreen - Using active particle in gameplay: ${particleItem.name} (${safeEmoji || 'none'})`);
+                // TODO: Future enhancement - apply particle-specific colors if needed
+              } else {
+                setActiveParticleEmoji(null);
+              }
+            } catch (error) {
+              console.warn('⚠️ Failed to load particle item:', error);
+              setActiveParticleEmoji(null);
+            }
+          } else {
+            setActiveParticleEmoji(null);
+          }
+          
+          // 🔴 BUG FIX: Apply theme with particle colors, create new object reference
+          const finalTheme = {
+            id: themeObj.id || activeThemeId,
+              name: themeObj.name,
+              primaryColor: themeObj.primaryColor,
+              secondaryColor: themeObj.secondaryColor,
+            particleColors: Array.isArray(particleColors) ? [...particleColors] : (Array.isArray(themeObj.particleColors) ? [...themeObj.particleColors] : ['#4ECDC4', '#00D9FF', '#00FFE5']),
+              backgroundColor: themeObj.backgroundColor,
+            gradientColors: Array.isArray(themeObj.gradientColors) ? [...themeObj.gradientColors] : ['#1a1a2e', '#16213e'],
+          };
+          
+          setCurrentTheme(finalTheme);
+          console.log(`✅ GameScreen - Theme applied: ${finalTheme.name}`);
+          console.log(`   Colors: Primary=${finalTheme.primaryColor}, Secondary=${finalTheme.secondaryColor}`);
+          console.log(`   Particle Colors:`, finalTheme.particleColors);
+          
+          // Load active ball emoji
+          if (activeBallId) {
+            try {
+              const { getItemById } = require('../data/ShopItems');
+              const ballItem = getItemById(activeBallId);
+              if (ballItem) {
+                // 🔴 SAFE_EMOJI_PATCH: Never directly access emoji, always use safe fallback
+                const safeEmoji = ballItem?.emoji ?? ballItem?.icon ?? ballItem?.character ?? '⚪';
+                setActiveBallEmoji(safeEmoji);
+                console.log(`⚽ Active ball: ${ballItem.name} (${safeEmoji})`);
+              }
+            } catch (error) {
+              console.warn('⚠️ Failed to load ball item:', error);
+            }
+          }
+        } else {
+          // Fallback to level-based theme
+          console.warn('⚠️ Theme not found, using level-based theme');
+          setCurrentTheme(getThemeForLevel(playerLevel));
         }
       } catch (error) {
-        console.warn('⚠️ Failed to load active cosmetics, using defaults:', error);
+        console.error('❌ Failed to load active cosmetics:', error);
+        // Fallback to level-based theme
+        setCurrentTheme(getThemeForLevel(playerLevel));
       }
     };
     
-    loadActiveCosmetics();
-  }, []);
+    // 🔴 BUG FIX: Only load cosmetics if globalThemeData is not available
+    // If globalThemeData exists, the primary effect (line 104) will handle theme updates
+    if (!globalThemeData || !globalThemeData.name) {
+      loadActiveCosmetics();
+    }
+    
+    // Subscribe to theme changes for real-time updates (fallback if ThemeContext not working)
+    const unsubscribe = themeService.subscribe((themeId) => {
+      console.log(`🔄 ThemeService: Theme changed to ${themeId}`);
+      // Only reload if globalThemeData is not available (ThemeContext should handle it)
+      if (!globalThemeData || !globalThemeData.name) {
+        loadActiveCosmetics();
+      }
+    });
+    
+    return () => {
+      unsubscribe();
+    };
+  }, [playerLevel]); // 🔴 BUG FIX: Remove globalThemeData dependency - primary effect handles it
+
+  // 🔴 PARTICLE FIX: Reload active particle when screen is focused (e.g., returning from Shop)
+  useFocusEffect(
+    useCallback(() => {
+      const reloadActiveParticle = async () => {
+        try {
+          const activeItemsData = await AsyncStorage.getItem('@active_items');
+          if (activeItemsData) {
+            const activeItems = JSON.parse(activeItemsData);
+            const activeParticleId = activeItems.particles;
+            
+            if (activeParticleId) {
+              try {
+                const { getItemById } = require('../data/ShopItems');
+                const particleItem = getItemById(activeParticleId);
+                if (particleItem) {
+                  // 🔴 SAFE_EMOJI_PATCH: Never directly access emoji, always use safe fallback
+                  const safeEmoji = particleItem?.emoji ?? particleItem?.icon ?? particleItem?.character ?? null;
+                  setActiveParticleEmoji(safeEmoji);
+                  console.log(`✨ GameScreen - Reloaded active particle on focus: ${particleItem.name} (${safeEmoji || 'none'})`);
+                } else {
+                  setActiveParticleEmoji(null);
+                }
+              } catch (error) {
+                console.warn('⚠️ Failed to reload particle item:', error);
+                setActiveParticleEmoji(null);
+              }
+            } else {
+              setActiveParticleEmoji(null);
+            }
+          }
+        } catch (error) {
+          console.warn('⚠️ Failed to reload active particle:', error);
+        }
+      };
+      
+      reloadActiveParticle();
+    }, [])
+  );
+
+  // 🔴 BUG #2 FIX: Initialize runId when game starts
+  useEffect(() => {
+    if (gameActive && runIdRef.current === 0) {
+      // First time game becomes active - initialize runId
+      runIdRef.current = 1;
+      console.log(`🔄 BUG #2 FIX: Game started - initialized runId=${runIdRef.current}`);
+    }
+  }, [gameActive]);
 
   // REFLEXION FIX: Cleanup effect - Stop all sounds and clear timers on unmount
   useEffect(() => {
@@ -162,44 +592,184 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     console.log('🎵 GameScreen mounted - starting gameplay music');
     musicManager.playGameplayMusic();
     
+    // 🔴 BUG #2 FIX: Reset runId on mount
+    runIdRef.current = 0;
+    
     return () => {
       console.log('🧹 GameScreen unmounting - cleaning up...');
       
+      // 🔴 BUG #2 FIX: Reset runId on unmount
+      runIdRef.current = 0;
+      
       // Stop all audio immediately
-      soundManager.stopAll().catch(err => {
+      // 🔴 FIX: Safe call - stopAll might not return a Promise
+      try {
+        const stopResult = soundManager.stopAll();
+        if (stopResult && typeof stopResult.catch === 'function') {
+          stopResult.catch(err => {
         console.warn('⚠️ Error stopping sounds on unmount:', err);
       });
+        }
+      } catch (err) {
+        console.warn('⚠️ Error stopping sounds on unmount:', err);
+      }
       
       // CRITICAL FIX: Stop music when leaving game
-      musicManager.stopAll().catch(err => {
+      // 🔴 FIX: Safe call - stopAll might not return a Promise
+      try {
+        const stopResult = musicManager.stopAll();
+        if (stopResult && typeof stopResult.catch === 'function') {
+          stopResult.catch(err => {
         console.warn('⚠️ Error stopping music on unmount:', err);
       });
+        }
+      } catch (err) {
+        console.warn('⚠️ Error stopping music on unmount:', err);
+      }
       
-      // Clear all timers
-      if (spawnTimerRef.current) {
-        clearInterval(spawnTimerRef.current);
-        spawnTimerRef.current = null;
+      // 🔴 KRİTİK DÜZELTME: Comprehensive cleanup - tüm timer'ları ve state'leri temizle
+      try {
+        // Clear all interval timers
+        if (spawnTimerRef.current) {
+          clearInterval(spawnTimerRef.current);
+          spawnTimerRef.current = null;
+        }
+        if (zenSpawnTimerRef.current) {
+          clearInterval(zenSpawnTimerRef.current);
+          zenSpawnTimerRef.current = null;
+        }
+        if (gameTimerRef.current) {
+          clearInterval(gameTimerRef.current);
+          gameTimerRef.current = null;
+        }
+        if (targetCleanupRef.current) {
+          clearInterval(targetCleanupRef.current);
+          targetCleanupRef.current = null;
+        }
+        if (speedTestTimerRef.current) {
+          clearInterval(speedTestTimerRef.current);
+          speedTestTimerRef.current = null;
+        }
+        if (speedTestSpawnTimerRef.current) {
+          clearInterval(speedTestSpawnTimerRef.current);
+          speedTestSpawnTimerRef.current = null;
+        }
+        
+        // 🔴 CRITICAL FIX: Reset Speed Test refs on unmount
+        speedTestTargetsLengthRef.current = 0;
+        speedTestStartTimeRef.current = null;
+        speedTestCompletedRef.current = false;
+        
+        // Clear all timeout timers
+        if (powerBarTimerRef.current) {
+          clearTimeout(powerBarTimerRef.current);
+          powerBarTimerRef.current = null;
+        }
+        if (powerBarActiveTimerRef.current) {
+          clearTimeout(powerBarActiveTimerRef.current);
+          powerBarActiveTimerRef.current = null;
+        }
+        
+        // 🔴 CLEANUP: Mark as unmounted to prevent state updates
+      isMountedRef.current = false;
+      isProcessingTapRef.current = false;
+      
+      // 🔴 MEMORY LEAK ÖNLEMİ: State'leri resetle (only if mounted)
+      if (isMountedRef.current) {
+        setTargets([]);
+        setIsGameOver(true);
+        setIsPaused(true);
+        setGameActive(false);
       }
-      if (gameTimerRef.current) {
-        clearInterval(gameTimerRef.current);
-        gameTimerRef.current = null;
-      }
-      if (targetCleanupRef.current) {
-        clearInterval(targetCleanupRef.current);
-        targetCleanupRef.current = null;
-      }
-      if (powerBarTimerRef.current) {
-        clearTimeout(powerBarTimerRef.current);
-        powerBarTimerRef.current = null;
-      }
-      if (powerBarActiveTimerRef.current) {
-        clearTimeout(powerBarActiveTimerRef.current);
-        powerBarActiveTimerRef.current = null;
+        
+        // SoundManager cleanup
+        try {
+          soundManager.stopAll();
+        } catch (e) {
+          // Fail silently if soundManager not available
+        }
+      } catch (error) {
+        console.warn('⚠️ Error during cleanup:', error);
       }
       
       console.log('✅ GameScreen cleanup complete');
     };
   }, []); // Empty deps - only run on mount/unmount
+
+  // CRITICAL FIX: Speed Test countdown timer
+  useEffect(() => {
+    // Only run if Speed Test mode and countdown is active
+    if (gameMode !== GAME_MODES.SPEED_TEST || countdown === null || countdown <= 0) {
+      return;
+    }
+    
+    console.log(`⏱️ Speed Test countdown started: ${countdown}`);
+    
+    // Animate countdown text immediately
+    Animated.sequence([
+      Animated.timing(shakeAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(shakeAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    
+    // 🔴 TAP SOUND FIX: Use playTap() for countdown
+    soundManager.playTap();
+    
+    // Start countdown interval
+    const countdownInterval = setInterval(() => {
+      setCountdown(prev => {
+        if (prev === null || prev <= 0) {
+          clearInterval(countdownInterval);
+          return null;
+        }
+        
+        if (prev <= 1) {
+          // Countdown complete - start the game IMMEDIATELY
+          console.log('✅ Countdown complete - starting game');
+          clearInterval(countdownInterval);
+          setGameActive(true);
+          // 🔴 TAP SOUND FIX: Use playTap() for countdown
+          soundManager.playTap();
+          return null;
+        }
+        
+        // Continue countdown
+        console.log(`⏱️ Countdown: ${prev - 1}`);
+        // 🔴 TAP SOUND FIX: Use playTap() for countdown
+        soundManager.playTap();
+        // Animate for each count
+        Animated.sequence([
+          Animated.timing(shakeAnim, {
+            toValue: 1,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+          Animated.timing(shakeAnim, {
+            toValue: 0,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+        ]).start();
+        return prev - 1;
+      });
+    }, 1000);
+    
+    return () => {
+      clearInterval(countdownInterval);
+    };
+  }, [gameMode, countdown, shakeAnim]);
+
+  // CRITICAL FIX: Update ref when target count changes
+  useEffect(() => {
+    speedTestTargetCountRef.current = speedTestTargetCount;
+  }, [speedTestTargetCount]);
 
   useEffect(() => {
     // CRITICAL FIX: Prevent game start spam with ref guard
@@ -208,9 +778,14 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       return;
     }
     
+    // CRITICAL FIX: Wait for countdown to complete before logging game start for Speed Test
+    if (gameMode === GAME_MODES.SPEED_TEST && countdown !== null) {
+      return;
+    }
+    
     gameStartLoggedRef.current = true;
     
-    // CRITICAL FIX: Log game start only once when component mounts
+    // CRITICAL FIX: Log game start only once when component mounts (after countdown for Speed Test)
     console.log(`🎮 Game started - Mode: ${gameMode}, Level: ${playerLevel}, Theme: ${currentTheme.name}`);
     analytics.logGameStart();
     
@@ -220,7 +795,8 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     if (themeUnlock) {
       // Check if this theme was already unlocked before
       // Calculate what level player was before (using XP - 1 to simulate previous state)
-      const currentXP = playerData.xp || 0;
+      // CRITICAL FIX: Add optional chaining for safe access
+      const currentXP = playerData?.xp ?? playerData?.totalXp ?? 0;
       const previousXP = Math.max(0, currentXP - 1);
       const previousLevel = getLevelFromXP(previousXP);
       
@@ -269,17 +845,89 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     }
   }, [score, difficulty, gameMode, playerLevel]);
 
+  // ✅ CRITICAL FIX: Zen Mode spawning - Relaxing, continuous spawns
   useEffect(() => {
     if (!gameActive || screenDimensions.width === 0) return;
-    if (gameMode === GAME_MODES.SPEED_TEST) return;
+    if (gameMode !== GAME_MODES.ZEN) return;
+    
+    // Zen mode: Slower, relaxing spawn rate (1500ms interval)
+    const zenSpawnInterval = GAME_CONSTANTS.ZEN_SPAWN_INTERVAL;
+    const maxZenTargets = 2; // Max 2 targets at once for relaxed gameplay
+    
+    if (zenSpawnTimerRef.current) {
+      clearInterval(zenSpawnTimerRef.current);
+      zenSpawnTimerRef.current = null;
+    }
+    
+    zenSpawnTimerRef.current = setInterval(() => {
+      setTargets(prev => {
+        if (prev.length >= maxZenTargets) {
+          return prev; // At max capacity
+        }
+        
+        // CRITICAL FIX: Pass existing targets to prevent overlap
+        const newTarget = generateTarget(gameAreaWidth, gameAreaHeight, 1, gameMode, currentTheme, playerLevel, activeBallEmoji, prev);
+        return [...prev, newTarget];
+      });
+    }, zenSpawnInterval);
+    
+    return () => {
+      if (zenSpawnTimerRef.current) {
+        clearInterval(zenSpawnTimerRef.current);
+        zenSpawnTimerRef.current = null;
+      }
+    };
+  }, [gameActive, gameAreaWidth, gameAreaHeight, screenDimensions.width, gameMode, currentTheme, playerLevel, activeBallEmoji]);
+  
+  // ✅ TASK 4: Multi-Spawn Rhythm Fix - Proper batch spawning for Classic & Rush
+  useEffect(() => {
+    if (!gameActive || screenDimensions.width === 0) return;
+    if (gameMode === GAME_MODES.SPEED_TEST || gameMode === GAME_MODES.ZEN) return;
 
     const spawnInterval = getSpawnInterval(difficulty, gameMode, playerLevel);
     const maxTargets = require('../utils/GameLogic').getMaxSimultaneousTargets(difficulty, playerLevel, gameMode);
     
+    // ✅ TASK 4: Cancel any pending spawn timers when difficulty/level changes
+    if (spawnTimerRef.current) {
+      clearInterval(spawnTimerRef.current);
+      spawnTimerRef.current = null;
+    }
+    
+    // ✅ TASK 4: Spawn batch logic - spawn multiple targets per interval based on mode
     spawnTimerRef.current = setInterval(() => {
       setTargets(prev => {
         const currentActiveTargets = prev.length;
-        const targetsToSpawn = Math.min(1, maxTargets - currentActiveTargets);
+        const availableSlots = maxTargets - currentActiveTargets;
+        
+        if (availableSlots <= 0) {
+          return prev; // At max capacity
+        }
+        
+        // ✅ TASK 4: Calculate batch size based on mode and difficulty
+        let batchSize = 1; // Default: spawn 1 at a time
+        
+        if (gameMode === GAME_MODES.RUSH) {
+          // Rush: spawn 2-4 targets per interval at higher levels
+          if (playerLevel >= 8) {
+            batchSize = Math.min(4, Math.floor(Math.random() * 3) + 2); // 2-4 targets
+          } else if (playerLevel >= 5) {
+            batchSize = Math.min(3, Math.floor(Math.random() * 2) + 2); // 2-3 targets
+          } else {
+            batchSize = Math.min(2, Math.floor(Math.random() * 2) + 1); // 1-2 targets
+          }
+        } else if (gameMode === GAME_MODES.CLASSIC) {
+          // Classic: gradually increase to 3 targets
+          if (playerLevel >= 8) {
+            batchSize = Math.min(3, Math.floor(Math.random() * 2) + 2); // 2-3 targets
+          } else if (playerLevel >= 5) {
+            batchSize = Math.min(2, Math.floor(Math.random() * 2) + 1); // 1-2 targets
+          } else {
+            batchSize = 1; // 1 target at low levels
+          }
+        }
+        
+        // Don't exceed available slots or max targets
+        const targetsToSpawn = Math.min(batchSize, availableSlots);
         
         if (targetsToSpawn <= 0) {
           return prev;
@@ -287,9 +935,11 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
         
         const newTargets = [];
         for (let i = 0; i < targetsToSpawn; i++) {
-          const newTarget = generateTarget(gameAreaWidth, gameAreaHeight, difficulty, gameMode, currentTheme, playerLevel, activeBallEmoji);
+          // CRITICAL FIX: Pass existing targets to prevent overlap
+          const newTarget = generateTarget(gameAreaWidth, gameAreaHeight, difficulty, gameMode, currentTheme, playerLevel, activeBallEmoji, [...prev, ...newTargets]);
           
           if (newTarget.isDanger) {
+            debugEvents.spawnEvent('danger', { x: newTarget.x, y: newTarget.y });
             const dangerChance = Math.min(
               DANGER_CONFIG.BASE_CHANCE + (playerLevel - DANGER_CONFIG.MIN_LEVEL) * DANGER_CONFIG.CHANCE_PER_LEVEL,
               DANGER_CONFIG.MAX_CHANCE
@@ -300,91 +950,405 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
           newTargets.push(newTarget);
         }
         
+        // ✅ TASK 4: Debug log (dev-only, remove in production)
+        if (__DEV__ && newTargets.length > 1) {
+          console.log(`🎯 TASK 4: Spawned batch of ${newTargets.length} targets (Level ${playerLevel}, Mode: ${gameMode}, Max: ${maxTargets})`);
+        }
+        
         return [...prev, ...newTargets];
       });
     }, spawnInterval);
 
     return () => {
-      if (spawnTimerRef.current) clearInterval(spawnTimerRef.current);
+      if (spawnTimerRef.current) {
+        clearInterval(spawnTimerRef.current);
+        spawnTimerRef.current = null;
+      }
     };
   }, [gameActive, gameAreaWidth, gameAreaHeight, difficulty, screenDimensions.width, gameMode, playerLevel, currentTheme, activeBallEmoji]);
 
+  // ✅ TASK 1: Speed Test (Time-Attack Mode) - Timer (count-up from 0)
+  // 🔴 SPEED TEST ROOT CAUSE ANALYSIS:
+  // 1. Timer effect has speedTestCompleted in deps, causing restart when completed
+  // 2. Timer callback uses setSpeedTestCompleted in functional update (inefficient)
+  // 3. Stale closure issues with speedTestStartTime
+  // FIX: Use refs for completion flag, remove from deps, use direct ref checks in callback
+  
   useEffect(() => {
-    if (gameMode !== GAME_MODES.SPEED_TEST || !gameActive || screenDimensions.width === 0) return;
+    // Sync ref with state
+    speedTestCompletedRef.current = speedTestCompleted;
+  }, [speedTestCompleted]);
+  
+  useEffect(() => {
+    // 🔴 FIX: Clear any existing timer first to prevent duplicates
+    if (speedTestTimerRef.current) {
+      clearInterval(speedTestTimerRef.current);
+      speedTestTimerRef.current = null;
+      console.log('[TIMER:ST] Cleared existing timer before starting new one');
+    }
 
-    if (speedTestTrials >= GAME_CONSTANTS.SPEED_TEST_TRIALS) {
-      setGameActive(false);
+    if (gameMode !== GAME_MODES.SPEED_TEST || !gameActive || speedTestCompleted || countdown !== null) {
+      console.log(`[TIMER:ST] Timer not started - mode=${gameMode}, active=${gameActive}, completed=${speedTestCompleted}, countdown=${countdown}`);
       return;
     }
 
-    const spawnSpeedTestTarget = () => {
-      setSpeedTestWaiting(false);
-      const target = generateTarget(gameAreaWidth, gameAreaHeight, 1, gameMode, currentTheme, playerLevel, activeBallEmoji);
-      target.speedTestTarget = true;
-      setTargets([target]);
-      setSpeedTestTargetTime(Date.now());
+    // Start timer when game becomes active (after countdown)
+    if (speedTestStartTime === 0) {
+      const startTime = Date.now();
+      setSpeedTestStartTime(startTime);
+      speedTestStartTimeRef.current = startTime; // 🔴 FIX: Store in ref for timer callback
+      speedTestElapsedTimeRef.current = 0;
+      console.log(`[TIMER:ST] Timer started at ${startTime}`);
+    } else {
+      speedTestStartTimeRef.current = speedTestStartTime; // 🔴 FIX: Keep ref in sync
+    }
+
+    // 🔴 FIX: Use stable interval with refs to avoid stale closures
+    let lastStateUpdate = 0;
+    speedTestTimerRef.current = setInterval(() => {
+      // Use refs to get current values (avoids stale closure)
+      const currentStartTime = speedTestStartTimeRef.current;
+      const currentCompleted = speedTestCompletedRef.current; // Use ref instead of state
+      
+      if (currentStartTime > 0 && !currentCompleted) {
+        const elapsed = Date.now() - currentStartTime;
+        speedTestElapsedTimeRef.current = elapsed;
+        
+        // Update state every 50ms to reduce re-renders
+        const now = Date.now();
+        if (now - lastStateUpdate >= 50) {
+          if (isMountedRef.current) {
+          setSpeedTestElapsedTime(elapsed);
+          }
+          lastStateUpdate = now;
+          console.log(`[TIMER_ST] ms=${elapsed}`);
+        }
+      } else if (currentCompleted) {
+        // Timer should stop if completed
+        if (speedTestTimerRef.current) {
+          clearInterval(speedTestTimerRef.current);
+          speedTestTimerRef.current = null;
+          console.log('[TIMER:ST] Timer stopped - completed');
+        }
+      }
+    }, 10);
+
+    console.log(`[TIMER:ST] Timer interval created`);
+
+    return () => {
+      if (speedTestTimerRef.current) {
+        clearInterval(speedTestTimerRef.current);
+        speedTestTimerRef.current = null;
+        console.log('[TIMER:ST] Timer interval cleared');
+      }
+    };
+  }, [gameMode, gameActive, countdown]); // 🔴 FIX: Removed speedTestCompleted and speedTestStartTime from deps
+
+  // ✅ TASK 1: Speed Test (Time-Attack Mode) - Spawn Logic
+  // 🔴 SPEED TEST STABILITY: Controlled interval, ref-based, immediate spawn after countdown
+  const speedTestRemainingTargetsRef = useRef(0);
+  
+  useEffect(() => {
+    // Clear existing spawn timer
+    if (speedTestSpawnTimerRef.current) {
+      clearInterval(speedTestSpawnTimerRef.current);
+      speedTestSpawnTimerRef.current = null;
+    }
+
+    // Only run in Speed Test mode, when active, after countdown
+    if (gameMode !== GAME_MODES.SPEED_TEST || !gameActive || screenDimensions.width === 0 || speedTestCompleted || countdown !== null) {
+      return;
+    }
+
+    // 🔴 SPEED TEST STABILITY: Spawn function using refs only
+    const spawnTargets = () => {
+      if (!isMountedRef.current || speedTestCompletedRef.current) {
+        return;
+      }
+      
+      // Calculate remaining using refs (no state dependency)
+      const currentHitCount = speedTestHitCountRef.current;
+      const currentTargetLimit = speedTestTargetCountRef.current || speedTestTargetCount;
+      const remaining = currentTargetLimit - currentHitCount;
+      speedTestRemainingTargetsRef.current = remaining;
+      
+      // Check completion
+      if (remaining <= 0) {
+          if (!speedTestCompletedRef.current) {
+            speedTestCompletedRef.current = true;
+            if (speedTestTimerRef.current) {
+              clearInterval(speedTestTimerRef.current);
+              speedTestTimerRef.current = null;
+            }
+            if (speedTestSpawnTimerRef.current) {
+              clearInterval(speedTestSpawnTimerRef.current);
+              speedTestSpawnTimerRef.current = null;
+            }
+        
+          // === HAPTIC PATCH START ===
+          // Performance-based sound mapping for Speed Test end result
+          const maxScore = speedTestTargetCountRef.current || speedTestTargetCount;
+          const score = speedTestHitCountRef.current || speedTestTargetsHit;
+          const scoreRatio = maxScore > 0 ? score / maxScore : 0;
+          
+          let resultSound = 'speedtest_fail';
+          let resultClassification = 'fail';
+          
+          if (scoreRatio >= 0.8) {
+            resultSound = 'speedtest_win';
+            resultClassification = 'win';
+          } else if (scoreRatio >= 0.5) {
+            resultSound = 'speedtest_ok';
+            resultClassification = 'ok';
+          }
+          
+          console.log(`[SPEEDTEST] result classification: ${resultClassification} (scoreRatio=${scoreRatio.toFixed(2)}, score=${score}/${maxScore})`);
+          soundManager.play(resultSound);
+          // === HAPTIC PATCH END ===
+          
+          // === SOUND REGISTRATION START ===
+          // Speed Test finish sound
+          soundManager.play('speedFinish').catch(() => {});
+          // === SOUND REGISTRATION END ===
+          
+          if (isMountedRef.current) {
+            setSpeedTestCompleted(true);
+            setGameActive(false);
+            setSpeedTestElapsedTime(speedTestElapsedTimeRef.current);
+            setTimeout(() => {
+              if (isMountedRef.current) {
+              setSpeedTestResultsVisible(true);
+              setSpeedTestCanRestart(true);
+              }
+            }, GAME_CONSTANTS.SPEED_TEST_RESULTS_FREEZE_MS);
+          }
+        }
+        return;
+      }
+      
+      // Spawn if no targets exist and targets remaining
+      setTargets(prev => {
+        if (prev.length > 0 || remaining <= 0) {
+          return prev;
+        }
+        
+        const spawnCount = getSpeedTestSpawnCount(remaining);
+        const targetsToSpawn = Math.min(spawnCount, remaining);
+
+          if (targetsToSpawn > 0 && gameAreaWidth > 0 && gameAreaHeight > 0) {
+            const newTargets = [];
+            for (let i = 0; i < targetsToSpawn; i++) {
+              const target = generateTarget(gameAreaWidth, gameAreaHeight, 1, gameMode, currentTheme, playerLevel, activeBallEmoji, [...prev, ...newTargets]);
+              target.speedTestTarget = true;
+              newTargets.push(target);
+            }
+          console.log(`[SPAWN_ST] count=${targetsToSpawn}`);
+            return [...prev, ...newTargets];
+          }
+        return prev;
+      });
     };
 
-    setTargets([]);
-    setSpeedTestWaiting(true);
-    const delay = GAME_CONSTANTS.SPEED_TEST_MIN_DELAY + 
-                  Math.random() * (GAME_CONSTANTS.SPEED_TEST_MAX_DELAY - GAME_CONSTANTS.SPEED_TEST_MIN_DELAY);
-    
-    const timer = setTimeout(spawnSpeedTestTarget, delay);
+    // 🔴 SPEED TEST STABILITY: Immediate spawn when countdown finishes
+    spawnTargets();
 
-    return () => clearTimeout(timer);
-  }, [speedTestTrials, gameActive, gameMode, gameAreaWidth, gameAreaHeight, currentTheme, playerLevel, activeBallEmoji, screenDimensions.width]);
+    // Controlled interval checking remainingTargets > 0
+    speedTestSpawnTimerRef.current = setInterval(() => {
+      if (speedTestRemainingTargetsRef.current > 0) {
+        spawnTargets();
+      }
+    }, 200);
+
+    return () => {
+      if (speedTestSpawnTimerRef.current) {
+        clearInterval(speedTestSpawnTimerRef.current);
+        speedTestSpawnTimerRef.current = null;
+      }
+    };
+  }, [gameMode, gameActive, countdown, screenDimensions.width, gameAreaWidth, gameAreaHeight, currentTheme, playerLevel, activeBallEmoji, speedTestTargetCount]);
 
   // Cleanup expired targets with mode-specific lifetime
   useEffect(() => {
-    if (!gameActive) return;
+    if (!gameActive) {
+      // 🔴 BUG #2 FIX: Clear interval when game becomes inactive
+      if (targetCleanupRef.current) {
+        clearInterval(targetCleanupRef.current);
+        targetCleanupRef.current = null;
+      }
+      return;
+    }
 
-    const targetLifetime = getTargetLifetime(gameMode);
+    const targetLifetime = getTargetLifetime(gameMode, playerLevel);
+    
+    // 🔴 BUG #2 FIX: Capture runId at interval creation time
+    const localRunId = runIdRef.current;
+    
+    // 🔴 BUG #2 FIX: Clear any existing interval before creating new one
+    if (targetCleanupRef.current) {
+      clearInterval(targetCleanupRef.current);
+      targetCleanupRef.current = null;
+    }
 
     targetCleanupRef.current = setInterval(() => {
+      try {
+        // 🔴 BUG #2 FIX: CRITICAL - Guard against stale callbacks from previous runs
+        if (localRunId !== runIdRef.current) {
+          console.warn(`⚠️ BUG #2 FIX: Stale target cleanup callback ignored (runId mismatch: ${localRunId} !== ${runIdRef.current})`);
+          return;
+        }
+        
+        // 🔴 RUSH MODE FIX: Additional guards - don't process if game is not active or is over
+        // Use ref to avoid stale closure issues
+        // 🔴 BUG #2 FIX: Use actual game mode for logging
+        const modeTag = gameMode ? `[${gameMode.toUpperCase().replace('_', ' ')}]` : '[GAME]';
+        if (!gameActive || gameOverRef.current) {
+          console.log(`${modeTag} Target cleanup blocked: gameActive=${gameActive}, gameOver=${gameOverRef.current}`);
+          return;
+        }
+
       const now = Date.now();
       setTargets(prev => {
-        const remaining = prev.filter(t => now - t.createdAt < targetLifetime);
+          // 🔴 BUG #2 FIX: Guard against stale state updates
+          if (localRunId !== runIdRef.current) {
+            console.warn(`⚠️ BUG #2 FIX: Stale setTargets callback ignored (runId mismatch)`);
+            return prev; // Return previous state unchanged
+          }
+          
+          // 🔴 BUG #2 FIX: Guard - if targets array is empty or invalid, skip processing
+          if (!Array.isArray(prev) || prev.length === 0) {
+            return prev;
+          }
+          
+          const remaining = prev.filter(t => {
+            // Defensive: Ensure target has required properties
+            if (!t || typeof t.createdAt !== 'number') {
+              return false;
+            }
+            return now - t.createdAt < targetLifetime;
+          });
         const expired = prev.length - remaining.length;
         
-        if (expired > 0 && gameMode !== GAME_MODES.ZEN) {
-          // CRITICAL FIX: Only deduct health for expired normal targets, not danger points
+        // ✅ TASK 1: Speed Test - Track misses for accuracy calculation
+        if (expired > 0 && gameMode === GAME_MODES.SPEED_TEST && !speedTestCompleted) {
+            setSpeedTestTargetsMissed(prevMissed => {
+              // Guard against stale updates
+              if (localRunId !== runIdRef.current) return prevMissed;
+              return prevMissed + expired;
+            });
+            // 🔴 FIX: Safe call - play might not return a Promise
+            try {
+              const playResult = soundManager.play('miss');
+              if (playResult && typeof playResult.catch === 'function') {
+                playResult.catch(() => {});
+              }
+            } catch (err) {
+              console.warn('⚠️ Error playing miss sound:', err);
+            }
+        }
+        
+        if (expired > 0 && gameMode !== GAME_MODES.ZEN && gameMode !== GAME_MODES.SPEED_TEST) {
+            // 🔴 BUG #2 FIX: Only deduct health for expired normal targets, not danger points
           const expiredNormalTargets = prev.filter(t => {
+              if (!t || typeof t.createdAt !== 'number') return false;
             const isExpired = now - t.createdAt >= targetLifetime;
             const isNormalTarget = !t.isDanger; // Don't penalize for expired danger points
             return isExpired && isNormalTarget;
           }).length;
           
           if (expiredNormalTargets > 0) {
-            setHealth(h => {
-              const newHealth = Math.max(0, h - expiredNormalTargets);
-              console.log(`⏰ Expired targets: ${expiredNormalTargets}, Health: ${h} → ${newHealth}`);
-              return newHealth;
-            });
+              // 🔴 BUG #2 FIX: Check revive protection window - ignore expired targets during grace period
+              // Use the same 'now' variable from outer scope (captured at interval callback start)
+              const inReviveProtectionWindow = reviveProtectionUntilRef.current && now < reviveProtectionUntilRef.current;
+              
+              if (inReviveProtectionWindow) {
+                // During revive protection window, ignore expired targets from old run
+                console.log(`🛡️ REVIVE DEBUG - Ignoring ${expiredNormalTargets} expired targets during revive protection window`);
+                // Still remove expired targets from array, but don't reduce health
+                // (The return remaining below will handle removing them)
+              } else {
+                // 🔴 RUSH MODE FIX: Normal gameplay - expired targets reduce health using safe update
+                // 🔴 BUG #2 FIX: Use actual game mode for logging
+                const modeTag = gameMode ? `[${gameMode.toUpperCase().replace('_', ' ')}]` : '[GAME]';
+                const healthUpdated = updateHealthSafe(-expiredNormalTargets, `expired_targets_${expiredNormalTargets}`, localRunId);
+                if (healthUpdated) {
+                  console.log(`${modeTag} Target expired, health--, expiredCount=${expiredNormalTargets}, runId=${localRunId}`);
             setCombo(0);
-            musicManager.resetSpeed(); // ULTIMATE: Reset music speed on combo break
-            soundManager.play('miss'); // Fire and forget - no await in setInterval
+                  // 🔴 FIX: Safe call - resetSpeed might not return a Promise
+                  try {
+                    const resetResult = musicManager.resetSpeed();
+                    if (resetResult && typeof resetResult.catch === 'function') {
+                      resetResult.catch(() => {});
+                    }
+                  } catch (err) {
+                    console.warn('⚠️ Error resetting music speed:', err);
+                  }
+                  // 🔴 FIX: Safe call - play might not return a Promise
+                  try {
+                    const playResult = soundManager.play('miss');
+                    if (playResult && typeof playResult.catch === 'function') {
+                      playResult.catch(() => {});
+                    }
+                  } catch (err) {
+                    console.warn('⚠️ Error playing miss sound:', err);
+                  }
             triggerHaptic('error');
+                } else {
+                  // 🔴 BUG #2 FIX: Use actual game mode for logging
+                  const modeTag = gameMode ? `[${gameMode.toUpperCase().replace('_', ' ')}]` : '[GAME]';
+                  console.log(`${modeTag} Blocked stale callback (old run) - expiredCount=${expiredNormalTargets}, localRunId=${localRunId}, currentRunId=${runIdRef.current}`);
+                }
+              }
           }
         }
         
         return remaining;
       });
+      } catch (error) {
+        console.error('❌ BUG #2 FIX: Error in target cleanup interval:', error);
+        // Don't throw - just log and continue
+      }
     }, 100);
 
     return () => {
-      if (targetCleanupRef.current) clearInterval(targetCleanupRef.current);
+      try {
+        if (targetCleanupRef.current) {
+          clearInterval(targetCleanupRef.current);
+          targetCleanupRef.current = null;
+        }
+      } catch (error) {
+        console.warn('⚠️ Error clearing target cleanup interval:', error);
+      }
     };
-  }, [gameActive, gameMode]);
+  }, [gameActive, gameMode, speedTestCompleted, gameOver]);
 
   // Game timer with mode-specific duration
+  // CRITICAL FIX: Speed Test has NO time limit - exclude from timer
   useEffect(() => {
     if (!gameActive) return;
+    // CRITICAL FIX: Speed Test mode has no time limit - timer only for Classic/Rush/Zen
+    if (gameMode === GAME_MODES.SPEED_TEST) return;
 
     gameTimerRef.current = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) {
+          // Time ran out - check if player won (has health) or lost (no health)
+          // Use functional update to get current health value
+          setHealth(currentHealth => {
+            if (currentHealth > 0) {
+            setGameWon(true); // Player won - survived until time ran out
+          } else {
+            setGameWon(false); // Player lost - no health left
+          }
+            return currentHealth; // Don't change health, just read it
+          });
           setGameActive(false);
+          // 🔴 RUSH MODE FIX: Ensure game over is triggered when time runs out
+          // Use setTimeout to allow state updates to complete first
+          setTimeout(() => {
+            gameOverRef.current = true;
+            setGameOver(true);
+            // handleGameOver will be called by the game over effect
+          }, 150);
           return 0;
         }
         return prev - 1;
@@ -394,7 +1358,7 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     return () => {
       if (gameTimerRef.current) clearInterval(gameTimerRef.current);
     };
-  }, [gameActive]);
+  }, [gameActive, gameMode]);
 
   // Power Bar active timer
   useEffect(() => {
@@ -410,57 +1374,322 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     };
   }, [powerBarActive]);
 
-  // Health check - offer revive
+  // 🔴 BUG #2 FIX: Health check - offer revive (disabled for Speed Test mode)
   useEffect(() => {
-    if (health <= 0 && gameActive && !hasRevived) {
+    // Speed Test mode has no health system
+    if (gameMode === GAME_MODES.SPEED_TEST) return;
+    
+    // 🔴 BUG #2 FIX: Only check for game over if game is active and health is actually 0
+    // Don't check if revive option is already showing (prevents duplicate triggers)
+    if (health <= 0 && gameActive && !hasRevived && !showReviveOption) {
+      console.log('💔 HEALTH CHECK - Health depleted, showing revive option');
+      console.log('  Health:', health);
+      console.log('  Game Active:', gameActive);
+      console.log('  Has Revived:', hasRevived);
+      setGameWon(false); // Player lost - health depleted
       setGameActive(false);
       setShowReviveOption(true);
-    } else if (health <= 0 && hasRevived) {
+    } else if (health <= 0 && hasRevived && gameActive && !showReviveOption) {
+      // 🔴 BUG #2 FIX: Only trigger game over if player has already revived and health is 0 again
+      // This means player used their 2 revive lives and died again
+      // BUT: Check if we're in revive protection window - if so, ignore this
+      const inReviveProtectionWindow = reviveProtectionUntilRef.current && Date.now() < reviveProtectionUntilRef.current;
+      if (!inReviveProtectionWindow) {
+        console.log('💔 HEALTH CHECK - Health depleted after revive, final game over');
+      setGameWon(false); // Player lost after revive
       setGameActive(false);
+      } else {
+        console.log('🛡️ HEALTH CHECK - Ignoring health=0 during revive protection window');
+      }
+    } else if (health > 0 && hasRevived && !gameActive && showReviveOption) {
+      // 🔴 BUG #2 FIX: If health is restored (revived) but game is not active, clear the revive option
+      // This happens when revive succeeds and we're waiting to resume
+      console.log('✅ HEALTH CHECK - Health restored after revive, clearing revive option');
+      setShowReviveOption(false);
     }
-  }, [health, gameActive, hasRevived]);
+  }, [health, gameActive, hasRevived, gameMode, showReviveOption]);
 
-  // Game over
+  // 🔴 RUSH MODE FIX: Game over - don't trigger if revive is in progress
   useEffect(() => {
-    if (!gameActive && !gameOver && !showReviveOption) {
+    // 🔴 KRİTİK DÜZELTME: Speed Test only triggers game over when COMPLETED, not when inactive
+    // Countdown bitince gameActive=false olabilir ama oyun henüz başlamamıştır
+    // Sadece speedTestCompleted=true olduğunda (30 hedef vurulduğunda) game over olmalı
+    if (gameMode === GAME_MODES.SPEED_TEST && speedTestCompleted && !gameOverRef.current) {
       handleGameOver();
+      return;
     }
-  }, [gameActive, gameOver, showReviveOption]);
+    
+    // 🔴 RUSH MODE FIX: If gameOver is already true, don't process again
+    if (gameOverRef.current || gameOver) {
+      return;
+    }
+    
+    // 🔴 RUSH MODE FIX: Don't trigger game over if:
+    // 1. Revive option is showing (player deciding to revive)
+    // 2. Player just revived (hasRevived=true) and health > 0 (revive successful, waiting to resume)
+    // 3. In revive protection window (grace period after revive)
+    // 4. Game is still active (health might be 0 but game hasn't stopped yet)
+    const inReviveProtectionWindow = reviveProtectionUntilRef.current && Date.now() < reviveProtectionUntilRef.current;
+    const justRevived = hasRevived && health > 0;
+    
+    // 🔴 RUSH MODE FIX: Only trigger game over if ALL conditions are met
+    // For Rush Mode: health must be 0, game must be inactive, and no revive in progress
+    // 🔴 BUG #2 FIX: Use actual game mode for logging
+    const modeTag = gameMode ? `[${gameMode.toUpperCase().replace('_', ' ')}]` : '[GAME]';
+    if (health <= 0 && !gameActive && !showReviveOption && !justRevived && !inReviveProtectionWindow) {
+      console.log(`${modeTag} Game Over triggered - health=${health}, gameActive=${gameActive}, hasRevived=${hasRevived}, showReviveOption=${showReviveOption}, inProtectionWindow=${inReviveProtectionWindow}`);
+      handleGameOver();
+    } else if (health <= 0 && gameActive) {
+      // Health is 0 but game is still active - this should trigger revive option, not game over
+      console.log(`${modeTag} Health is 0 but game is active - waiting for revive option logic`);
+    } else if (health <= 0 && !gameActive) {
+      // Log why game over was blocked
+      console.log(`${modeTag} Game Over blocked - health=${health}, gameActive=${gameActive}, showReviveOption=${showReviveOption}, justRevived=${justRevived}, inProtectionWindow=${inReviveProtectionWindow}`);
+    }
+  }, [gameActive, gameOver, showReviveOption, hasRevived, health, gameMode, timeLeft, speedTestCompleted]); // 🔴 FIX: Added speedTestCompleted to deps
 
   const handleGameOver = async () => {
-    setGameOver(true);
-    await soundManager.play('gameOver');
+    // 🔴 RUSH MODE FIX: Prevent multiple calls to handleGameOver using ref
+    // 🔴 BUG #2 FIX: Use actual game mode for logging
+    const modeTag = gameMode ? `[${gameMode.toUpperCase().replace('_', ' ')}]` : '[GAME]';
+    if (gameOverRef.current || gameOver) {
+      console.log(`${modeTag} handleGameOver already called, skipping duplicate`);
+      return;
+    }
     
-    // CRITICAL FIX: Only award XP/Coins if player achieved meaningful score
-    // If score is 0 or very low (< 50), player failed → no rewards
-    const didSucceed = score >= 50; // Minimum 50 points to earn rewards
+    console.log(`${modeTag} handleGameOver called - setting gameOver=true`);
+    gameOverRef.current = true;
+    setGameOver(true);
+    
+    // 🔴 BUG FIX: Safe sound play
+    try {
+      const playResult = soundManager.play('gameOver');
+      if (playResult && typeof playResult.then === 'function') {
+        await playResult;
+      }
+    } catch (error) {
+      console.warn('⚠️ Error playing game over sound:', error);
+    }
+    
+    // 🔍 XP CALC DEBUG: Log game end state
+    console.log('🔍 XP CALC DEBUG - Game Over State:');
+    console.log('  Health:', health);
+    console.log('  Game Won:', gameWon);
+    console.log('  Score:', score);
+    console.log('  Max Combo:', maxCombo);
+    console.log('  Game Mode:', gameMode);
+    console.log('  Time Left:', timeLeft);
+    
+    // 🔴 XP/COIN BUG FIX: Determine win/loss state correctly for Classic and Rush modes
+    // Win condition: gameWon === true (survived until time ran out OR completed Speed Test)
+    // Lose condition: gameWon === false (died) → Reduced rewards
+    // CRITICAL: For Speed Test, always count as victory if completed
+    // CRITICAL FIX: For Classic/Rush, check both gameWon state AND health > 0 as fallback
+    // IMPORTANT: Use health > 0 as primary check since gameWon state might not be updated yet
+    let didSucceed = false;
+    if (gameMode === GAME_MODES.SPEED_TEST) {
+      didSucceed = speedTestCompleted;
+    } else {
+      // 🔴 XP/COIN BUG FIX: Check health first (more reliable than gameWon state)
+      // If health > 0, player survived (victory)
+      // If health <= 0, player died (defeat)
+      // Also check gameWon as secondary check
+      didSucceed = health > 0 || gameWon === true;
+    }
+    
+    console.log('  Is Victory:', didSucceed);
+    console.log('  gameWon state:', gameWon);
+    console.log('  health:', health);
+    console.log('  timeLeft:', timeLeft);
     
     let xp = 0;
     let coins = 0;
     
+    // 🔴 XP/COIN BUG FIX: REBALANCED XP CALCULATION
+    // New balanced formula: Base XP from score (0.15x) + Combo bonus (2x) + Mode multiplier
+    const calculateXP = (score, maxCombo, gameMode) => {
+      // Base XP from score (reduced significantly)
+      const baseXP = Math.floor(score * 0.15);
+      
+      // Bonus from combo
+      const comboBonus = Math.floor(maxCombo * 2);
+      
+      // Mode multiplier
+      const modeMultipliers = {
+        [GAME_MODES.CLASSIC]: 1.0,
+        [GAME_MODES.RUSH]: 1.2,
+        [GAME_MODES.ZEN]: 0.5,
+        [GAME_MODES.SPEED_TEST]: 0.8,
+      };
+      const modeMultiplier = modeMultipliers[gameMode] || 1.0;
+      
+      // Calculate total
+      const totalXP = Math.floor((baseXP + comboBonus) * modeMultiplier);
+      
+      console.log('🎮 XP CALCULATION:');
+      console.log('  Score:', score);
+      console.log('  Base XP (score * 0.15):', baseXP);
+      console.log('  Combo Bonus (combo * 2):', comboBonus);
+      console.log('  Mode Multiplier:', modeMultiplier);
+      console.log('  Total XP:', totalXP);
+      
+      return totalXP;
+    };
+    
+    // 🔴 XP/COIN BUG FIX: Always calculate XP/coins, even if score is 0
+    // This ensures players get at least minimal rewards for playing
     if (didSucceed) {
-      // Calculate XP with Power Bar multiplier
-      let xpMultiplier = 1.0;
+      // Calculate XP using new balanced formula
+      xp = calculateXP(score, maxCombo, gameMode);
+      
+      // Power Bar multiplier (applied after base calculation)
       if (powerBarActive) {
-        xpMultiplier = GAME_CONSTANTS.POWER_BAR_XP_MULTIPLIER;
+        xp = Math.floor(xp * GAME_CONSTANTS.POWER_BAR_XP_MULTIPLIER);
+        console.log('  Power Bar Active - Final XP (×2):', xp);
       }
       
-      // CRITICAL FIX: Improved XP/Coin economy for better progression
-      // XP: score/8 (increased from score/10 for easier leveling)
-      // Coins: score/40 + combo/6 (slightly increased for better economy)
-      const baseXP = Math.floor(score / 8);
-      xp = Math.floor(baseXP * xpMultiplier);
+      // Coins calculation
       coins = Math.floor(score / 40) + Math.floor(maxCombo / 6);
       
-      console.log(`✅ Game completed successfully: ${score} points → +${xp} XP, +${coins} coins`);
+      // 🔴 XP/COIN BUG FIX: Ensure minimum rewards for victory
+      if (xp === 0 && score > 0) {
+        xp = Math.max(1, Math.floor(score * 0.1)); // Minimum 10% of score as XP
+      }
+      if (coins === 0 && score > 0) {
+        coins = Math.max(1, Math.floor(score / 100)); // Minimum 1 coin per 100 score
+      }
+      
+      console.log('💰 REWARDS CALCULATED (VICTORY):');
+      console.log('  Final XP:', xp);
+      console.log('  Final Coins:', coins);
+      debugEvents.gameEnd(score, 0, maxCombo, xp);
     } else {
-      console.log(`❌ Game failed: ${score} points (minimum 50 required) → no rewards`);
+      // CRITICAL FIX: Lose penalty - 25% of normal XP (never zero)
+      const baseXP = Math.floor(score * 0.15);
+      const comboBonus = Math.floor(maxCombo * 2);
+      const totalBaseXP = baseXP + comboBonus;
+      xp = Math.max(1, Math.floor(totalBaseXP * 0.25)); // 25% penalty, minimum 1 XP
+      coins = 0; // No coins on loss
+      
+      console.log('💰 REWARDS CALCULATED (DEFEAT):');
+      console.log('  Base XP:', baseXP);
+      console.log('  Combo Bonus:', comboBonus);
+      console.log('  Total Base XP:', totalBaseXP);
+      console.log('  Penalty (25%):', xp);
+      console.log('  Final Coins:', coins);
+      debugEvents.gameEnd(score, 0, maxCombo, xp);
     }
     
+    // 🔴 XP/COIN BUG FIX: Set earned values BEFORE saving progress
     setEarnedXP(xp);
     setEarnedCoins(coins);
     
     analytics.logGameOver(score, maxCombo, coins, xp);
+    
+    // 🔴 XP/COIN BUG FIX: Always save progress for Classic and Rush modes
+    // CRITICAL FIX: Speed Test never shows revive/2x rewards - just show results
+    if (gameMode === GAME_MODES.SPEED_TEST) {
+      // CRITICAL FIX BUG #1: Save progress immediately for Speed Test (no double reward modal)
+      console.log('🎮 GAME OVER - Speed Test: Saving progress immediately');
+      await saveProgress(xp, coins);
+      // Speed Test handles its own results modal
+      return;
+    }
+    
+    // 🔴 XP/COIN BUG FIX: ALWAYS save progress for Classic/Rush games, regardless of win/loss
+    // This ensures XP/coins are always persisted, even if the UI logic has issues
+    console.log(`🎮 GAME OVER - ${didSucceed ? 'Victory' : 'Defeat'}: Saving progress (XP: ${xp}, Coins: ${coins})`);
+    const saveResult = await saveProgress(xp, coins);
+    if (saveResult) {
+      console.log('✅ Progress saved successfully');
+    } else {
+      console.error('❌ Failed to save progress - retrying...');
+      // Retry once
+      const retryResult = await saveProgress(xp, coins);
+      if (!retryResult) {
+        console.error('❌ Retry also failed - progress may not be saved');
+      }
+    }
+    
+    // 🔴 XP/COIN BUG FIX: Show appropriate UI based on win/loss
+    // Only show 2x rewards if player actually won and earned rewards
+    if (didSucceed && (xp > 0 || coins > 0)) {
+      setShowDoubleReward(true);
+    } else {
+      // Loss: Show revive option if not already shown
+      if (!showReviveOption && !hasRevived) {
+        setShowReviveOption(true);
+      }
+    }
+    
+    // CRITICAL FIX: Record score to leaderboard for Classic and Rush modes
+    if ((gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH) && score > 0) {
+      try {
+        await leaderboardManager.addScore(gameMode, {
+          score,
+          combo: maxCombo,
+          timestamp: Date.now(),
+          playerName: 'Player',
+        });
+        console.log(`📊 Score recorded to ${gameMode} leaderboard: ${score} (Combo: ${maxCombo}x)`);
+      } catch (error) {
+        console.error('❌ Failed to record score to leaderboard:', error);
+      }
+    }
+    
+    // CRITICAL FIX: Save stats to @player_stats for StatsScreen
+    try {
+      const statsData = await AsyncStorage.getItem('@player_stats');
+      const currentStats = statsData ? JSON.parse(statsData) : {
+        highScoreClassic: 0,
+        highScoreRush: 0,
+        highScoreZen: 0,
+        fastestReaction: 0,
+        totalPlaytime: 0,
+        averageAccuracy: 0,
+        totalTaps: 0,
+        perfectGames: 0,
+      };
+      
+      // Update mode-specific high scores
+      if (gameMode === GAME_MODES.CLASSIC) {
+        currentStats.highScoreClassic = Math.max(currentStats.highScoreClassic || 0, score);
+      } else if (gameMode === GAME_MODES.RUSH) {
+        currentStats.highScoreRush = Math.max(currentStats.highScoreRush || 0, score);
+      } else if (gameMode === GAME_MODES.ZEN) {
+        currentStats.highScoreZen = Math.max(currentStats.highScoreZen || 0, score);
+      }
+      
+      // CRITICAL FIX: Update comprehensive stats
+      currentStats.gamesPlayed = (currentStats.gamesPlayed || 0) + 1;
+      currentStats.maxCombo = Math.max(currentStats.maxCombo || 0, maxCombo);
+      
+      // Calculate accuracy: hits / (hits + misses)
+      const totalHits = score / 10; // Approximate hits
+      const totalMisses = speedTestTargetsMissed || (health < GAME_CONSTANTS.MAX_HEALTH ? (GAME_CONSTANTS.MAX_HEALTH - health) : 0);
+      const totalAttempts = totalHits + totalMisses;
+      if (totalAttempts > 0) {
+        const currentAccuracy = (totalHits / totalAttempts) * 100;
+        // Update average accuracy (weighted average)
+        const oldGames = (currentStats.gamesPlayed || 1) - 1;
+        const oldAvgAccuracy = currentStats.averageAccuracy || 0;
+        currentStats.averageAccuracy = oldGames > 0 
+          ? ((oldAvgAccuracy * oldGames) + currentAccuracy) / currentStats.gamesPlayed
+          : currentAccuracy;
+      }
+      
+      // Update other stats
+      currentStats.totalTaps = (currentStats.totalTaps || 0) + totalHits;
+      currentStats.totalPlaytime = (currentStats.totalPlaytime || 0) + (getGameDuration(gameMode) - timeLeft);
+      if (health === GAME_CONSTANTS.MAX_HEALTH && gameWon) {
+        currentStats.perfectGames = (currentStats.perfectGames || 0) + 1;
+      }
+      
+      await AsyncStorage.setItem('@player_stats', JSON.stringify(currentStats));
+      console.log('✅ Stats saved to @player_stats:', { gamesPlayed: currentStats.gamesPlayed, maxCombo: currentStats.maxCombo });
+    } catch (error) {
+      console.error('❌ Failed to save stats:', error);
+    }
     
     // ULTIMATE: Record session for progress tracking
     await progressTracker.recordGameSession({
@@ -472,20 +1701,222 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       mode: gameMode,
       reactionTimes: [], // TODO: Track individual tap times
       duration: getGameDuration(gameMode) - timeLeft,
-      level: getLevelFromXP(playerData.xp),
+      level: getLevelFromXP(playerData?.xp ?? playerData?.totalXp ?? 0),
     });
-    
-    setShowDoubleReward(true);
   };
 
-  const handleRevive = async () => {
-    const result = await adService.showRewardedAd('revive');
-    if (result.success) {
+  // 🔴 BUG #2 FIX: Safe function to start a new game run with runId isolation
+  const startNewRun = useCallback((initialHealth) => {
+    try {
+      // Increment runId to invalidate all previous callbacks
+      runIdRef.current = (runIdRef.current || 0) + 1;
+      const newRunId = runIdRef.current;
+      console.log(`🔄 BUG #2 FIX: Starting new run with runId=${newRunId}, health=${initialHealth}`);
+      
+      // Safely clear all timers with null checks
+      try {
+        if (targetCleanupRef.current) {
+          clearInterval(targetCleanupRef.current);
+          targetCleanupRef.current = null;
+        }
+        if (spawnTimerRef.current) {
+          clearInterval(spawnTimerRef.current);
+          spawnTimerRef.current = null;
+        }
+        if (zenSpawnTimerRef.current) {
+          clearInterval(zenSpawnTimerRef.current);
+          zenSpawnTimerRef.current = null;
+        }
+        if (gameTimerRef.current) {
+          clearInterval(gameTimerRef.current);
+          gameTimerRef.current = null;
+        }
+        if (powerBarTimerRef.current) {
+          clearInterval(powerBarTimerRef.current);
+          powerBarTimerRef.current = null;
+        }
+        if (powerBarActiveTimerRef.current) {
+          clearTimeout(powerBarActiveTimerRef.current);
+          powerBarActiveTimerRef.current = null;
+        }
+      } catch (timerError) {
+        console.warn('⚠️ Error clearing timers during revive:', timerError);
+      }
+      
+      // Clear all existing targets - they belong to the old run
+      setTargets([]);
+      
+      // 🔴 BUG #2 FIX: Do NOT clear protection window here - it's set in handleRevive and should persist
+      // Only clear it if this is a fresh game start (not a revive)
+      if (initialHealth !== 2) {
+        reviveProtectionUntilRef.current = null;
+      }
+      
+      // Reset game state
+      gameOverRef.current = false; // 🔴 RUSH MODE FIX: Reset ref
+      setGameOver(false);
       setShowReviveOption(false);
-      setHealth(2);
-      setGameActive(true);
+      setHealth(initialHealth);
       setHasRevived(true);
+      
+      console.log(`✅ BUG #2 FIX: New run ${newRunId} initialized - timers cleared, targets cleared, health=${initialHealth}`);
+      return newRunId;
+    } catch (error) {
+      console.error('❌ BUG #2 FIX: Error in startNewRun:', error);
+      // Still increment runId even on error to prevent stale callbacks
+      runIdRef.current = (runIdRef.current || 0) + 1;
+      return runIdRef.current;
+    }
+  }, []);
+
+  // 🔴 BUG #2 FIX: Rush mode revive - properly restore 2 lives and resume gameplay
+  const handleRevive = async () => {
+    try {
+      console.log('🔄 REVIVE - Starting revive process...');
+      console.log('  Current health:', health);
+      console.log('  Current gameActive:', gameActive);
+      console.log('  Current gameOver:', gameOver);
+      console.log('  Current showReviveOption:', showReviveOption);
+      console.log('  Current hasRevived:', hasRevived);
+      console.log('  Current targets on screen:', targets.length);
+      console.log('  Current runId:', runIdRef.current);
+      
+    const result = await adService.showRewardedAd('revive');
+      if (result && result.success) {
+        console.log('✅ REVIVE - Ad watched successfully, granting 2 lives');
+        
+        // 🔴 BUG #2 FIX: Set revive protection window FIRST, before any state changes
+        // This ensures the protection window is active before game over effect can trigger
+        const protectionEndTime = Date.now() + REVIVE_PROTECTION_DURATION_MS;
+        reviveProtectionUntilRef.current = protectionEndTime;
+        console.log('🛡️ REVIVE DEBUG - Protection window set until', new Date(protectionEndTime).toISOString());
+        
+        // 🔴 BUG #2 FIX: Ensure gameOver is false BEFORE starting new run (defensive)
+        setGameOver(false);
+        
+        // 🔴 BUG #2 FIX: Start new run with runId isolation
+        const newRunId = startNewRun(2);
+        
+        // 🔴 BUG #2 FIX: Extended delay to ensure ALL pending callbacks are cleared
+        // This prevents race conditions where old expired-target callbacks might still fire
+        setTimeout(() => {
+          // Guard: Verify runId hasn't changed (another revive happened)
+          if (runIdRef.current === newRunId) {
+            // 🔴 BUG #2 FIX: Double-check that target cleanup interval is still cleared
+            if (targetCleanupRef.current) {
+              clearInterval(targetCleanupRef.current);
+              targetCleanupRef.current = null;
+            }
+            
+            // 🔴 RUSH MODE FIX: Ensure gameOver is false before resuming (defensive check)
+            gameOverRef.current = false;
+            setGameOver(false);
+            
+            // 🔴 BUG #2 FIX: Set gameActive to true to resume gameplay
+      setGameActive(true);
+            
+            // 🔴 CRITICAL FIX: Restart game timer for Rush/Classic modes after revive
+            if (gameMode === GAME_MODES.RUSH || gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.ZEN) {
+              // Clear any existing timer
+              if (gameTimerRef.current) {
+                clearInterval(gameTimerRef.current);
+                gameTimerRef.current = null;
+              }
+              
+              // Restart timer if time is remaining
+              if (timeLeft > 0) {
+                gameTimerRef.current = setInterval(() => {
+                  setTimeLeft(prev => {
+                    if (prev <= 1) {
+                      // Time ran out - check if player won (has health) or lost (no health)
+                      setHealth(currentHealth => {
+                        if (currentHealth > 0) {
+                          setGameWon(true);
+                        } else {
+                          setGameWon(false);
+                        }
+                        return currentHealth;
+                      });
+                      setGameActive(false);
+                      gameOverRef.current = true;
+                      setGameOver(true);
+                      return 0;
+                    }
+                    return prev - 1;
+                  });
+                }, 1000);
+                console.log('✅ REVIVE - Game timer restarted, time remaining:', timeLeft);
+              }
+            }
+            
+            // 🔴 BUG FIX: Immediately spawn first batch of targets after revive
+            // Don't wait for the spawn interval - spawn targets right away
+            setTimeout(() => {
+              if (runIdRef.current === newRunId) {
+                try {
+                  const { getSpawnInterval, getMaxSimultaneousTargets } = require('../utils/GameLogic');
+                  const spawnInterval = getSpawnInterval(difficulty, gameMode, playerLevel);
+                  const maxTargets = getMaxSimultaneousTargets(difficulty, playerLevel, gameMode);
+                  
+                  setTargets(prev => {
+                    const currentActiveTargets = prev.length;
+                    const availableSlots = maxTargets - currentActiveTargets;
+                    
+                    if (availableSlots <= 0) {
+                      return prev;
+                    }
+                    
+                    // Spawn initial batch after revive
+                    let batchSize = 1;
+                    if (gameMode === GAME_MODES.RUSH) {
+                      batchSize = Math.min(2, availableSlots);
+                    }
+                    
+                    const newTargets = [];
+                    for (let i = 0; i < Math.min(batchSize, availableSlots); i++) {
+                      const newTarget = generateTarget(
+                        gameAreaWidth,
+                        gameAreaHeight,
+                        difficulty,
+                        gameMode,
+                        currentTheme,
+                        playerLevel,
+                        activeBallEmoji,
+                        [...prev, ...newTargets]
+                      );
+                      newTargets.push(newTarget);
+                    }
+                    
+                    if (newTargets.length > 0) {
+                      console.log(`🎯 REVIVE - Spawned ${newTargets.length} targets immediately after revive`);
+                    }
+                    return [...prev, ...newTargets];
+                  });
+                } catch (error) {
+                  console.warn('⚠️ Error spawning targets after revive:', error);
+                }
+              }
+            }, 100); // Small delay to ensure gameActive state is set and spawn effect is ready
+            
+            console.log(`✅ REVIVE - Game resumed with 2 lives (runId=${newRunId})`);
+            console.log('  New health:', 2);
+            console.log('  New gameActive:', true);
+            console.log('  New gameOver:', false);
+            console.log('  Targets cleared, interval cleared - ready for fresh gameplay');
+            console.log('  Protection window active until:', new Date(reviveProtectionUntilRef.current).toISOString());
+          } else {
+            console.warn(`⚠️ REVIVE - RunId changed during revive (${newRunId} → ${runIdRef.current}), skipping resume`);
+          }
+        }, 250); // 🔴 BUG #2 FIX: Increased delay to 250ms to ensure all state updates and effects complete
+        
       analytics.logRewardClaim('revive', 2);
+      } else {
+        console.log('❌ REVIVE - Ad not watched, revive cancelled');
+      }
+    } catch (error) {
+      console.error('❌ REVIVE - Error during revive process:', error);
+      // Still increment runId to prevent stale callbacks
+      runIdRef.current = (runIdRef.current || 0) + 1;
     }
   };
 
@@ -510,8 +1941,15 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   /**
    * Save player progress after game over
    * Updates XP, coins, high score, and achievements
+   * CRITICAL FIX: Uses single source of truth getPlayerProgress
    */
   const saveProgress = useCallback(async (xp, coins) => {
+    console.log('💾 SAVE PROGRESS - Starting save operation:');
+    console.log('  Input XP:', xp);
+    console.log('  Input Coins:', coins);
+    console.log('  Max Combo:', maxCombo);
+    
+    // Calculate combo bonus
     const comboBonus = calculateComboBonusXP(maxCombo, xp);
     const totalXP = xp + comboBonus;
     
@@ -521,27 +1959,108 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       console.log(`⚡ XP earned: ${totalXP}`);
     }
     
-    const oldLevel = getLevelFromXP(playerData.xp);
+    // CRITICAL FIX: Use single source of truth for progress calculation
+    const { getPlayerProgress } = require('../utils/GameLogic');
+    // CRITICAL FIX: Add fallback for totalXp access
+    const currentXP = playerData?.xp ?? playerData?.totalXp ?? 0;
+    console.log('📦 CURRENT PLAYER DATA:', {
+      xp: playerData?.xp,
+      totalXp: playerData?.totalXp,
+      level: playerData?.level,
+      coins: playerData?.coins,
+    });
+    console.log('  Using currentXP:', currentXP);
     
-    await addXP(totalXP);
-    await addCoins(coins);
+    const oldProgress = getPlayerProgress(currentXP);
+    const newXP = currentXP + totalXP;
+    const newProgress = getPlayerProgress(newXP);
     
-    const newLevel = getLevelFromXP(playerData.xp + totalXP);
+    // CRITICAL FIX BUG #2: Calculate new totals and level
+    const newTotalXP = newProgress.totalXp;
+    const newLevel = newProgress.level;
+    const newCurrentXP = newProgress.currentXp;
+    const newXPToNextLevel = newProgress.xpToNextLevel;
+    const newCoins = (playerData?.coins || 0) + coins;
     
-    if (newLevel > oldLevel) {
-      await soundManager.play('levelUp');
-      console.log(`🎉 Level up! ${oldLevel} → ${newLevel}`);
-      analytics.logLevelUp(newLevel, playerData.xp + totalXP);
+    console.log('🎮 Game End - Updating player data:');
+    console.log('  Earned XP:', totalXP);
+    console.log('  Earned Coins:', coins);
+    console.log('  Old Total XP:', currentXP);
+    console.log('  New Total XP:', newTotalXP);
+    console.log('  Old Level:', oldProgress.level);
+    console.log('  New Level:', newLevel);
+    console.log('  Old Coins:', playerData?.coins || 0);
+    console.log('  New Coins:', newCoins);
+    
+    // 🔴 XP/COIN BUG FIX: Use updatePlayerData directly instead of addXP/addCoins
+    // This prevents race conditions and ensures atomic updates
+    // CRITICAL FIX BUG #2: Force immediate save with all progression fields
+    try {
+      const updateData = {
+        xp: newTotalXP,
+        level: newLevel,
+        currentXp: newCurrentXP,
+        xpToNextLevel: newXPToNextLevel,
+        totalXp: newTotalXP,
+        coins: newCoins,
+        highScore: Math.max(playerData?.highScore || 0, score),
+        maxCombo: Math.max(playerData?.maxCombo || 0, maxCombo),
+        gamesPlayed: (playerData?.gamesPlayed || 0) + 1,
+      };
+      
+      console.log('💾 SAVING UPDATED DATA:', updateData);
+      const saveSuccess = await updatePlayerData(updateData);
+      
+      if (saveSuccess) {
+        console.log('✅ Player data saved successfully to storage');
+        
+        // CRITICAL: Verify save worked by reloading data
+        try {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          const STORAGE_KEY = '@reflexion_player_data';
+          const verification = await AsyncStorage.getItem(STORAGE_KEY);
+          if (verification) {
+            const verified = JSON.parse(verification);
+            console.log('🔍 VERIFICATION - Loaded data from storage:');
+            console.log('  Total XP:', verified.totalXp);
+            console.log('  Level:', verified.level);
+            console.log('  Coins:', verified.coins);
+            console.log('  Current XP:', verified.currentXp);
+            
+            if (verified.totalXp !== newTotalXP) {
+              console.error('❌ SAVE VERIFICATION FAILED!');
+              console.error('  Expected Total XP:', newTotalXP);
+              console.error('  Got Total XP:', verified.totalXp);
+            } else {
+              console.log('✅ SAVE VERIFIED - Data matches expected values');
+            }
+          } else {
+            console.warn('⚠️ Verification: No data found in storage');
+          }
+        } catch (verifyError) {
+          console.warn('⚠️ Could not verify save:', verifyError);
+        }
+      } else {
+        console.error('❌ Failed to save player data - updatePlayerData returned false');
+        return false;
+      }
+    } catch (error) {
+      console.error('❌ Failed to save player data:', error);
+      console.error('  Error details:', error.message, error.stack);
+      return false;
     }
     
-    await updatePlayerData({
-      highScore: Math.max(playerData.highScore || 0, score),
-      maxCombo: Math.max(playerData.maxCombo || 0, maxCombo),
-      gamesPlayed: (playerData.gamesPlayed || 0) + 1,
-    });
+    // Check for level up AFTER calculating with correct values
+    if (newProgress.level > oldProgress.level) {
+      await soundManager.play('levelUp');
+      console.log(`🎉 Level up! ${oldProgress.level} → ${newProgress.level} (XP: ${oldProgress.totalXp} → ${newProgress.totalXp})`);
+      debugEvents.levelUp(newProgress.level, newProgress.totalXp);
+      analytics.logLevelUp(newProgress.level, newProgress.totalXp);
+    }
     
-    console.log(`✅ Progress saved: +${totalXP} XP, +${coins} coins`);
-  }, [playerData, score, maxCombo, addXP, addCoins, updatePlayerData]);
+    console.log(`✅ Progress saved: +${totalXP} XP (Total: ${newTotalXP}), +${coins} coins (Total: ${newCoins}), Level: ${oldProgress.level} → ${newLevel}`);
+    return true;
+  }, [playerData, score, maxCombo, updatePlayerData]);
 
   /**
    * Handle double reward ad watch
@@ -555,7 +2074,8 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       setEarnedXP(finalXP);
       setEarnedCoins(finalCoins);
       setShowDoubleReward(false);
-      saveProgress(finalXP, finalCoins);
+      // CRITICAL FIX BUG #1: Ensure progress is saved after doubling
+      await saveProgress(finalXP, finalCoins);
       analytics.logRewardClaim('double_reward', finalCoins);
     }
   };
@@ -572,6 +2092,8 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   }, [earnedXP, earnedCoins, saveProgress]);
 
   const handlePlayAgain = () => {
+    // 🔴 RUSH MODE FIX: Reset game over ref
+    gameOverRef.current = false;
     // Reset game state
     setGameOver(false);
     setShowDoubleReward(false);
@@ -584,8 +2106,32 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     setHealth(GAME_CONSTANTS.MAX_HEALTH);
     setTimeLeft(getGameDuration(gameMode));
     setGameActive(true);
+    setGameWon(false);
     setHasRevived(false);
     setDifficulty(1);
+    
+    // ✅ TASK 1: Reset Speed Test state
+    if (gameMode === GAME_MODES.SPEED_TEST) {
+      setSpeedTestStartTime(0);
+      setSpeedTestElapsedTime(0);
+      setSpeedTestTargetsHit(0);
+      setSpeedTestTargetsMissed(0);
+      setSpeedTestCompleted(false);
+      setSpeedTestResultsVisible(false);
+      setSpeedTestCanRestart(false);
+      speedTestHitCountRef.current = 0;
+      speedTestElapsedTimeRef.current = 0;
+      speedTestTargetsLengthRef.current = 0; // 🔴 CRITICAL FIX: Reset targets length ref
+      speedTestCompletedRef.current = false; // 🔴 CRITICAL FIX: Reset completion ref
+      speedTestStartTimeRef.current = null; // 🔴 CRITICAL FIX: Reset start time ref
+      // CRITICAL FIX: Reset countdown for Speed Test (allow re-initialization)
+      speedTestInitializedRef.current = false;
+      setCountdown(3);
+      setGameActive(false); // Don't start until countdown completes
+      console.log('✅ Speed Test: Play Again - Countdown reset to 3, all refs cleared');
+    } else {
+      setGameActive(true);
+    }
     
     // ULTIMATE: Start gameplay music
     musicManager.playGameplayMusic();
@@ -595,12 +2141,15 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     setPowerBarActive(false);
     setRushComboMultiplier(1);
     
-    // Clear any existing timers
+    // 🔴 CRITICAL FIX: Clear any existing timers (already done above, but ensure cleanup)
     if (spawnTimerRef.current) clearInterval(spawnTimerRef.current);
+    if (zenSpawnTimerRef.current) clearInterval(zenSpawnTimerRef.current);
     if (gameTimerRef.current) clearInterval(gameTimerRef.current);
     if (targetCleanupRef.current) clearInterval(targetCleanupRef.current);
     if (powerBarTimerRef.current) clearTimeout(powerBarTimerRef.current);
     if (powerBarActiveTimerRef.current) clearTimeout(powerBarActiveTimerRef.current);
+    if (speedTestTimerRef.current) clearInterval(speedTestTimerRef.current);
+    if (speedTestSpawnTimerRef.current) clearInterval(speedTestSpawnTimerRef.current);
   };
 
   /**
@@ -621,6 +2170,10 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       clearInterval(spawnTimerRef.current);
       spawnTimerRef.current = null;
     }
+    if (zenSpawnTimerRef.current) {
+      clearInterval(zenSpawnTimerRef.current);
+      zenSpawnTimerRef.current = null;
+    }
     if (gameTimerRef.current) {
       clearInterval(gameTimerRef.current);
       gameTimerRef.current = null;
@@ -637,9 +2190,26 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       clearTimeout(powerBarActiveTimerRef.current);
       powerBarActiveTimerRef.current = null;
     }
+    if (speedTestTimerRef.current) {
+      clearInterval(speedTestTimerRef.current);
+      speedTestTimerRef.current = null;
+    }
+    if (speedTestSpawnTimerRef.current) {
+      clearInterval(speedTestSpawnTimerRef.current);
+      speedTestSpawnTimerRef.current = null;
+    }
+    
+    // 🔴 CRITICAL FIX: Reset Speed Test refs
+    speedTestTargetsLengthRef.current = 0;
+    speedTestStartTimeRef.current = null;
+    speedTestCompletedRef.current = false;
+    speedTestHitCountRef.current = 0;
+    speedTestElapsedTimeRef.current = 0;
 
     // Reset ALL game state variables
+    gameOverRef.current = false; // 🔴 RUSH MODE FIX: Reset ref
     setGameOver(false);
+    setGameWon(false);
     setShowDoubleReward(false);
     setShowReviveOption(false);
     setGameActive(false);
@@ -669,189 +2239,376 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   }, [navigation, gameMode]);
 
   // Camera shake animation for perfect combos
-  // ✅ FIX: Safe haptic feedback calls
-  const triggerHaptic = useCallback((type = 'light') => {
+  // === HAPTIC PATCH START ===
+  // ✅ FIX: Safe haptic feedback calls with proper intensity mapping
+  const triggerHaptic = useCallback((type = 'medium') => {
     try {
       // Safe check before calling getHapticsEnabled
       const hapticsEnabled = settingsService && typeof settingsService.getHapticsEnabled === 'function' 
         ? settingsService.getHapticsEnabled() 
         : true;
       
-      if (!hapticsEnabled) return;
+      if (!hapticsEnabled) {
+        console.log(`[HAPTIC] trigger blocked - vibration disabled, type=${type}`);
+        return;
+      }
       
+      // Fire-and-forget: never block tap performance with await
+      (async () => {
+        try {
       if (type === 'light') {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            console.log(`[HAPTIC] trigger light`);
       } else if (type === 'medium') {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            console.log(`[HAPTIC] trigger medium`);
       } else if (type === 'heavy') {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+            console.log(`[HAPTIC] trigger heavy`);
       } else if (type === 'error') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            console.log(`[HAPTIC] trigger error`);
       } else if (type === 'success') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            console.log(`[HAPTIC] trigger success`);
       }
     } catch (error) {
       console.warn('⚠️ Haptic feedback failed:', error);
+        }
+      })();
+    } catch (error) {
+      console.warn('⚠️ Haptic feedback setup failed:', error);
     }
   }, []);
+  // === HAPTIC PATCH END ===
 
   const triggerCameraShake = useCallback(() => {
+    const intensity = COMBO_ANIMATION_CONFIG.CAMERA_SHAKE_INTENSITY;
+    const segmentDuration = COMBO_ANIMATION_CONFIG.CAMERA_SHAKE_DURATION / 4;
+    
     Animated.sequence([
       Animated.timing(shakeAnim, {
-        toValue: 10,
-        duration: 50,
+        toValue: intensity,
+        duration: segmentDuration,
+        easing: ANIMATION_EASING.EASE_OUT,
         useNativeDriver: true,
       }),
       Animated.timing(shakeAnim, {
-        toValue: -10,
-        duration: 50,
+        toValue: -intensity,
+        duration: segmentDuration,
+        easing: ANIMATION_EASING.EASE_IN_OUT,
         useNativeDriver: true,
       }),
       Animated.timing(shakeAnim, {
-        toValue: 10,
-        duration: 50,
+        toValue: intensity,
+        duration: segmentDuration,
+        easing: ANIMATION_EASING.EASE_IN_OUT,
         useNativeDriver: true,
       }),
       Animated.timing(shakeAnim, {
         toValue: 0,
-        duration: 50,
+        duration: segmentDuration,
+        easing: ANIMATION_EASING.EASE_IN,
         useNativeDriver: true,
       }),
     ]).start();
   }, [shakeAnim]);
 
-  const handleTap = useCallback(async (target) => {
-    setTargets(prev => prev.filter(t => t.id !== target.id));
+  /**
+   * Merkezi hit registration - TÜM başarılı tap'lar buradan geçer
+   * @param {Object} target - Vurulan target
+   * @param {Object} hitConfig - Hit yapılandırması (ses, animasyon, progress)
+   */
+  const registerHit = useCallback((target, hitConfig = {}) => {
+    const {
+      playSound = true,
+      soundType = 'tap',
+      createParticles = true,
+      particleCount = 10,
+      particleColor = null,
+      particleEmoji = activeParticleEmoji,
+      updateProgress = true,
+      progressDelta = 1,
+      updateScore = true,
+      scoreDelta = 10,
+      updateCombo = true,
+      showFloatingText = true,
+      floatingTextValue = null,
+      floatingTextColor = null,
+    } = hitConfig;
 
-    if (gameMode === GAME_MODES.SPEED_TEST) {
-      const reactionTime = Date.now() - speedTestTargetTime;
-      setSpeedTestTimes(prev => [...prev, reactionTime]);
-      setSpeedTestTrials(prev => prev + 1);
-      
-      const newParticles = Array.from({ length: 10 }, (_, i) => ({
-        id: `particle-${Date.now()}-${i}`,
-        x: target.x + target.size / 2,
-        y: target.y + target.size / 2,
-        color: currentTheme.particleColors[i % currentTheme.particleColors.length] || target.color,
-      }));
-      setParticles(prev => [...prev, ...newParticles]);
-      
-      await soundManager.play('tap');
-      console.log(`⏱️ Speed Test: Trial ${speedTestTrials + 1}, Reaction: ${reactionTime}ms`);
-      return;
+    console.log(`[HIT] Registered hit for target ${target.id}`, hitConfig);
+
+    // 1️⃣ SES: Her zaman çal (playSound=true ise)
+    if (playSound) {
+      try {
+        if (soundType === 'tap') {
+          soundManager.playTap();
+        } else if (soundType === 'lucky') {
+          soundManager.play('luckyTap');
+        } else if (soundType === 'miss') {
+          soundManager.play('miss');
+        } else {
+          soundManager.play(soundType);
+        }
+        console.log(`[HIT] Sound played: ${soundType}`);
+      } catch (error) {
+        console.warn('⚠️ Sound playback failed:', error);
+      }
     }
 
-    if (gameMode === GAME_MODES.ZEN) {
-      // Zen mode: Simple visual + audio feedback only
-      const particleCount = 15;
-      const newParticles = Array.from({ length: particleCount }, (_, i) => ({
+    // 2️⃣ VFX/ANIMASYON: Particle'lar oluştur
+    if (createParticles && isMountedRef.current) {
+      const particles = Array.from({ length: particleCount }, (_, i) => ({
         id: `particle-${Date.now()}-${i}`,
         x: target.x + target.size / 2,
         y: target.y + target.size / 2,
-        color: currentTheme.particleColors[i % currentTheme.particleColors.length] || target.color,
+        color: particleColor || currentTheme.particleColors[i % currentTheme.particleColors.length] || target.color,
+        emoji: particleEmoji || null,
       }));
-      setParticles(prev => [...prev, ...newParticles]);
-      
-      // CRITICAL FIX: Always play tap sound in Zen mode
-      await soundManager.play('tap', combo + 1);
-      console.log(`🧠 Zen mode: tap sound played (combo: ${combo + 1}x)`);
-      
-      // Update combo for visual feedback (no scoring)
+      setParticles(prev => [...prev, ...particles]);
+      console.log(`[HIT] Particles created: ${particleCount}`);
+    }
+
+    // 3️⃣ FLOATING TEXT: Skor/bonus göster
+    if (showFloatingText && isMountedRef.current) {
+      const floatingText = {
+        id: `float-${Date.now()}`,
+        x: target.x + target.size / 2 - 20,
+        y: target.y,
+        text: floatingTextValue || `+${scoreDelta}`,
+        color: floatingTextColor || currentTheme?.primaryColor || '#4ECDC4',
+        isBonus: floatingTextValue !== null,
+      };
+      setFloatingTexts(prev => [...prev, floatingText]);
+      console.log(`[HIT] Floating text created: ${floatingText.text}`);
+    }
+
+    // 4️⃣ PROGRESS: Mode-specific progress güncelle
+    if (updateProgress && isMountedRef.current) {
+    if (gameMode === GAME_MODES.SPEED_TEST) {
+      setSpeedTestTargetsHit(prev => {
+          const newCount = prev + progressDelta;
+          speedTestHitCountRef.current = newCount;
+          console.log(`[HIT] Speed Test progress: ${newCount}/${speedTestTargetCountRef.current}`);
+        return newCount;
+      });
+      }
+    }
+
+    // 5️⃣ SCORE: Skor güncelle (Zen hariç)
+    if (updateScore && gameMode !== GAME_MODES.ZEN && isMountedRef.current) {
+      setScore(s => {
+        const newScore = s + scoreDelta;
+        console.log(`[HIT] Score updated: ${s} → ${newScore}`);
+        return newScore;
+      });
+    }
+
+    // 6️⃣ COMBO: Combo güncelle
+    if (updateCombo && isMountedRef.current) {
       const newCombo = combo + 1;
       setCombo(newCombo);
-      if (newCombo > maxCombo) setMaxCombo(newCombo);
+      if (newCombo > maxCombo) {
+        setMaxCombo(newCombo);
+      }
+      console.log(`[HIT] Combo updated: ${combo} → ${newCombo}`);
       
-      return; // Zen mode is purely visual + audio, no scoring/danger/powerup
+      // Power bar güncelle (Zen hariç)
+      if (gameMode !== GAME_MODES.ZEN && newCombo > 0) {
+        const newPower = Math.min(100, powerBar + GAME_CONSTANTS.POWER_BAR_FILL_PER_TAP);
+        setPowerBar(newPower);
+        if (newPower >= 100 && !powerBarActive) {
+          setPowerBarActive(true);
+          console.log('⚡ ReflexXP Power Bar ACTIVATED!');
+        }
+      }
     }
 
-    // ⚠️ DANGER POINT LOGIC - Player tapped a red warning target!
-    if (target.isDanger) {
-      console.log('❤️ Player lost 1 life (red danger target)');
-      
-      // CRITICAL FIX: Ensure we only lose 1 life, not reset to 0
-      setHealth(prevHealth => {
-        const newHealth = Math.max(0, prevHealth - 1);
-        console.log(`💔 Health: ${prevHealth} → ${newHealth}`);
-        return newHealth;
-      });
-      
-      setCombo(0); // Reset combo on danger tap
-      
-      // Play miss sound and error haptic
+    // 7️⃣ HAPTIC: Dokunsal feedback
+    if (updateCombo) {
+      triggerHaptic('light');
+    }
+
+    console.log(`[HIT] Registration complete for target ${target.id}`);
+  }, [
+    activeParticleEmoji,
+    currentTheme,
+    combo,
+    maxCombo,
+    powerBar,
+    powerBarActive,
+    gameMode,
+    triggerHaptic,
+    speedTestTargetCountRef,
+    isMountedRef,
+  ]);
+
+  // ====================================================
+  // 🔴 UNIFIED HIT HANDLER - SINGLE SOURCE OF TRUTH
+  // ====================================================
+  // This function ALWAYS handles ALL aspects of a successful hit:
+  // 1. Sound (appropriate for hit type)
+  // 2. Visual feedback (particles, floating text)
+  // 3. Progress updates (combo, score, power bar, speed test counters)
+  // 4. Haptics and camera shake
+  // ====================================================
+  const handleSuccessfulHit = useCallback(async (target, hitContext) => {
+    const {
+      hitType = 'normal', // 'normal' | 'danger' | 'powerup' | 'lucky' | 'speedtest' | 'zen'
+      newCombo = 0,
+      points = 0,
+      coinsEarned = 0,
+      bonusXP = 0,
+      bonusScore = 0,
+      shouldUpdateCombo = true,
+      shouldUpdateScore = true,
+      shouldUpdatePowerBar = true,
+      shouldUpdateSpeedTest = false,
+      powerBarMultiplier = 1, // For power-ups (2x)
+    } = hitContext;
+
+    console.log(`[DEBUG HIT] handleSuccessfulHit called: targetId=${target.id}, hitType=${hitType}, newCombo=${newCombo}, willPlaySound=true, willAnimate=true, willUpdateProgress=true`);
+
+    // ====================================================
+    // 1. SOUND - ALWAYS PLAY APPROPRIATE SOUND
+    // ====================================================
+    try {
+      if (hitType === 'danger') {
+        // Danger: play miss sound (error feedback)
       await soundManager.play('miss');
-      console.log('🎵 Sound test: miss played successfully (danger tap)');
-      
-      triggerHaptic('error');
-      
-      // Create red particles for danger tap
-      const particleCount = 15;
-      const redParticles = Array.from({ length: particleCount }, (_, i) => ({
+        console.log('[DEBUG HIT] sound+FX triggered for targetId=' + target.id + ', mode=danger (miss sound)');
+      } else if (hitType === 'powerup') {
+        // Power-up: play luckyTap sound
+        await soundManager.play('luckyTap');
+        console.log('[DEBUG HIT] sound+FX triggered for targetId=' + target.id + ', mode=powerup (luckyTap sound)');
+      } else if (hitType === 'lucky') {
+        // Lucky target: play luckyTap sound
+        await soundManager.play('luckyTap');
+        console.log('[DEBUG HIT] sound+FX triggered for targetId=' + target.id + ', mode=lucky (luckyTap sound)');
+      } else {
+        // Normal/Speed Test/Zen: play tap sound
+        soundManager.playTap();
+        console.log('[DEBUG HIT] sound+FX triggered for targetId=' + target.id + ', mode=' + hitType + ' (tap sound)');
+        
+        // Combo milestone: play combo sound in addition to tap
+        if (newCombo > 0 && newCombo % 5 === 0) {
+          await soundManager.play('combo', newCombo);
+          console.log('[DEBUG HIT] combo milestone sound triggered for combo=' + newCombo);
+        }
+      }
+    } catch (error) {
+      console.warn('[DEBUG HIT] Sound error (non-critical):', error);
+    }
+
+    // ====================================================
+    // 2. VISUAL FEEDBACK - PARTICLES
+    // ====================================================
+    const particleCount = hitType === 'powerup' ? 20 : hitType === 'danger' ? 15 : hitType === 'zen' ? 15 : 10;
+    const particleColor = hitType === 'danger' 
+      ? DANGER_CONFIG.COLOR 
+      : hitType === 'powerup' 
+        ? POWERUP_CONFIG.COLOR 
+        : currentTheme.particleColors[0] || target.color;
+    
+    const newParticles = Array.from({ length: particleCount }, (_, i) => ({
         id: `particle-${Date.now()}-${i}`,
-        x: target.x + target.size / 2,
-        y: target.y + target.size / 2,
-        color: DANGER_CONFIG.COLOR,
-      }));
-      setParticles(prev => [...prev, ...redParticles]);
-      
-      // Show -1 life floating text
-      const floatingText = {
+      x: target.x + target.size / 2,
+      y: target.y + target.size / 2,
+      color: hitType === 'danger' || hitType === 'powerup'
+        ? particleColor
+        : currentTheme.particleColors[i % currentTheme.particleColors.length] || target.color,
+      emoji: (hitType === 'danger' || hitType === 'powerup') ? null : (activeParticleEmoji || null),
+    }));
+    if (isMountedRef.current) {
+      setParticles(prev => [...prev, ...newParticles]);
+    }
+
+    // ====================================================
+    // 3. VISUAL FEEDBACK - FLOATING TEXT
+    // ====================================================
+    let floatingText = null;
+    if (hitType === 'danger') {
+      floatingText = {
         id: `float-${Date.now()}`,
         x: target.x + target.size / 2 - 20,
         y: target.y,
         text: '-1 ❤️',
         color: '#FF0000',
       };
-      setFloatingTexts(prev => [...prev, floatingText]);
-      
-      return; // Exit early - no score for danger taps
-    }
-
-    // ELITE v3.0: 💎 POWER-UP LOGIC - Player tapped a gold bonus target!
-    if (target.isPowerUp) {
-      console.log('💎 Power-up collected! 3x score, +50 XP, +10 coins');
-      
-      const newCombo = combo + 1;
-      setCombo(newCombo);
-      if (newCombo > maxCombo) setMaxCombo(newCombo);
-      
-      // Power-up bonuses
-      const bonusScore = POWERUP_CONFIG.SCORE_MULTIPLIER * 50; // 3x multiplier
-      const bonusCoins = POWERUP_CONFIG.COIN_BONUS;
-      const bonusXP = POWERUP_CONFIG.XP_BONUS;
-      
-      setScore(s => s + bonusScore);
-      setEarnedCoins(prev => prev + bonusCoins);
-      setEarnedXP(prev => prev + bonusXP);
-      
-      // Play luckyTap sound + success haptic
-      await soundManager.play('luckyTap');
-      console.log('🎵 Sound test: luckyTap played successfully (power-up)');
-      
-      triggerHaptic('success');
-      
-      // Create GOLD particles for power-up
-      const goldParticleCount = 20; // More particles for celebration
-      const goldParticles = Array.from({ length: goldParticleCount }, (_, i) => ({
-        id: `particle-${Date.now()}-${i}`,
-        x: target.x + target.size / 2,
-        y: target.y + target.size / 2,
-        color: POWERUP_CONFIG.COLOR, // Gold
-      }));
-      setParticles(prev => [...prev, ...goldParticles]);
-      
-      // Show power-up bonus text
-      const floatingText = {
+    } else if (hitType === 'powerup') {
+      floatingText = {
         id: `float-${Date.now()}`,
         x: target.x + target.size / 2 - 30,
         y: target.y,
         text: `💎 +${bonusScore} +${bonusXP}XP`,
         color: POWERUP_CONFIG.COLOR,
+        isBonus: true,
+        isCombo: false,
       };
+    } else if (hitType === 'lucky') {
+      floatingText = {
+        id: `float-${Date.now()}`,
+        x: target.x + target.size / 2 - 20,
+        y: target.y,
+        text: `+${coinsEarned} 🪙`,
+        color: '#FFD93D',
+        isBonus: true,
+        isCombo: false,
+      };
+    } else {
+      // Normal/Speed Test/Zen
+      const isComboMilestone = newCombo > 0 && newCombo % 5 === 0;
+      floatingText = {
+        id: `float-${Date.now()}`,
+        x: target.x + target.size / 2 - 20,
+        y: target.y,
+        text: `+${points}`,
+        color: currentTheme?.primaryColor || target.color || '#4ECDC4',
+        isCombo: isComboMilestone,
+        isBonus: false,
+      };
+    }
+    
+    if (floatingText && isMountedRef.current) {
       setFloatingTexts(prev => [...prev, floatingText]);
-      
-      // Continue with normal combo logic (power bar, etc.)
-      if (newCombo > 0) {
-        const newPower = Math.min(100, powerBar + GAME_CONSTANTS.POWER_BAR_FILL_PER_TAP * 2); // 2x power bar fill
+    }
+
+    // ====================================================
+    // 4. PROGRESS UPDATES - COMBO
+    // ====================================================
+    if (shouldUpdateCombo && isMountedRef.current) {
+      if (hitType === 'danger') {
+        setCombo(0);
+      } else {
+        setCombo(newCombo);
+        if (newCombo > maxCombo) {
+          setMaxCombo(newCombo);
+        }
+      }
+    }
+
+    // ====================================================
+    // 5. PROGRESS UPDATES - SCORE & COINS & XP
+    // ====================================================
+    if (shouldUpdateScore && gameMode !== GAME_MODES.ZEN && isMountedRef.current) {
+      if (hitType === 'powerup') {
+        setScore(s => s + bonusScore);
+        setEarnedCoins(prev => prev + coinsEarned);
+        setEarnedXP(prev => prev + bonusXP);
+      } else if (hitType === 'lucky') {
+        setEarnedCoins(prev => prev + coinsEarned);
+      } else if (hitType !== 'danger' && hitType !== 'speedtest' && hitType !== 'zen') {
+        setScore(s => s + points);
+      }
+    }
+
+    // ====================================================
+    // 6. PROGRESS UPDATES - POWER BAR
+    // ====================================================
+    if (shouldUpdatePowerBar && newCombo > 0 && hitType !== 'danger' && isMountedRef.current) {
+      const powerFill = GAME_CONSTANTS.POWER_BAR_FILL_PER_TAP * powerBarMultiplier;
+      const newPower = Math.min(100, powerBar + powerFill);
         setPowerBar(newPower);
         
         if (newPower >= 100 && !powerBarActive) {
@@ -860,96 +2617,297 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
         }
       }
       
-      return; // Exit early - power-up fully handled
+    // ====================================================
+    // 7. PROGRESS UPDATES - SPEED TEST COUNTERS
+    // ====================================================
+    if (shouldUpdateSpeedTest && gameMode === GAME_MODES.SPEED_TEST && isMountedRef.current) {
+      setSpeedTestTargetsHit(prev => {
+        const newCount = prev + 1;
+        const targetCount = speedTestTargetCountRef.current || speedTestTargetCount;
+        speedTestHitCountRef.current = newCount;
+        return newCount;
+      });
     }
 
-    // Create particles with theme colors (normal taps)
-    const particleCount = 10; // Zen mode handled earlier
-    const newParticles = Array.from({ length: particleCount }, (_, i) => ({
-      id: `particle-${Date.now()}-${i}`,
-      x: target.x + target.size / 2,
-      y: target.y + target.size / 2,
-      color: currentTheme.particleColors[i % currentTheme.particleColors.length] || target.color,
-    }));
-    setParticles(prev => [...prev, ...newParticles]);
+    // ====================================================
+    // 8. HAPTIC FEEDBACK
+    // === HAPTIC PATCH START ===
+    // Medium intensity for normal hits, heavy for danger, light for miss
+    // ====================================================
+    if (hitType === 'danger') {
+      triggerHaptic('heavy'); // Heavy haptic for danger hits
+    } else if (hitType === 'powerup' || hitType === 'lucky') {
+      triggerHaptic('success'); // Success notification for special hits
+    } else if (newCombo > 0) {
+      triggerHaptic('medium'); // Medium intensity for normal successful hits
+    }
+    // === HAPTIC PATCH END ===
 
-    // Score calculation with mode support
-    const newCombo = combo + 1;
-    let points = 10;
-    let coinsEarned = 0;
-    let bonusText = null;
-    
-    // ULTIMATE: Update music speed based on combo
+    // ====================================================
+    // 9. CAMERA SHAKE FOR COMBO MILESTONES
+    // ====================================================
+    if (newCombo > 0 && newCombo % 5 === 0 && hitType !== 'danger') {
+      triggerCameraShake();
+      if (hitType !== 'powerup' && hitType !== 'lucky') {
+        // Already played combo sound above for normal hits
+        triggerHaptic('success');
+      }
+    }
+
+    // ====================================================
+    // 10. MODE-SPECIFIC LOGIC
+    // ====================================================
+    // Update music speed based on combo
+    if (hitType !== 'danger') {
     musicManager.updateComboSpeed(newCombo);
+    }
     
     // Rush mode: combo multiplier increases every 5 taps
-    if (gameMode === GAME_MODES.RUSH && newCombo % 5 === 0) {
-      const newMultiplier = rushComboMultiplier + 0.2;
-      setRushComboMultiplier(newMultiplier);
+    if (gameMode === GAME_MODES.RUSH && newCombo > 0 && newCombo % 5 === 0 && hitType !== 'danger' && isMountedRef.current) {
+      setRushComboMultiplier(prev => {
+        const newMultiplier = prev + 0.2;
       console.log(`💥 Rush Combo Multiplier: ${newMultiplier.toFixed(1)}x`);
+        return newMultiplier;
+      });
     }
-    
-    // Lucky tap bonus
-    if (target.isLucky) {
+
+    console.log(`[DEBUG HIT] handleSuccessfulHit completed: targetId=${target.id}, hitType=${hitType}, all feedback triggered`);
+  }, [combo, maxCombo, powerBar, powerBarActive, currentTheme, activeParticleEmoji, gameMode, speedTestTargetCount, triggerHaptic, triggerCameraShake, isMountedRef]);
+
+  const handleTap = useCallback(async (target) => {
+    console.log(
+      `[DEBUG TAP] tap handler called, mode=${gameMode}, targetId=${target?.id}, gameActive=${gameActive}, gameOver=${gameOverRef.current}, runId=${runIdRef.current}`
+    );
+
+    // 1) Block taps during Speed Test countdown
+    if (gameMode === GAME_MODES.SPEED_TEST && countdown !== null && countdown > 0) {
+      console.log('[DEBUG TAP] Tap blocked: Speed Test countdown active');
+      return;
+    }
+
+    // 2) Block taps when game not active or already over
+    if (gameOverRef.current || !gameActive) {
+      console.log(
+        `[DEBUG TAP] Tap blocked: gameOver=${gameOverRef.current}, gameActive=${gameActive}`
+      );
+      return;
+    }
+
+    // 3) Validate target object
+    if (!target || !target.id) {
+      console.warn('[DEBUG TAP] Tap blocked: invalid target object', target);
+      return;
+    }
+
+    // 🚨 KEY CHANGE:
+    // From this point on, we TRUST the target passed from NeonTarget.
+    // We DO NOT depend on the current targets array to "find" it.
+    const targetToProcess = target;
+
+    // 4) Remove target from state AFTER we decide to process it
+    //    This removal is only for visual/state cleanup, not for validation.
+    setTargets(prev => prev.filter(t => t && t.id !== target.id));
+
+    console.log(
+      `[DEBUG TAP] Tap validated and processing - targetId=${target.id}, type=${
+        targetToProcess.isDanger
+          ? 'danger'
+          : targetToProcess.isPowerUp
+          ? 'powerup'
+          : targetToProcess.isLucky
+          ? 'lucky'
+          : 'normal'
+      }`
+    );
+
+    // 5) Mode-specific handling using handleSuccessfulHit as SINGLE source of feedback
+
+    // 5.a) SPEED TEST MODE
+    if (gameMode === GAME_MODES.SPEED_TEST) {
+      if (speedTestCompleted || !gameActive) {
+        console.log('[DEBUG TAP] Speed Test: Tap blocked - completed or inactive');
+        return;
+      }
+
+      const newCombo = combo + 1;
+
+      await handleSuccessfulHit(targetToProcess, {
+        hitType: 'speedtest',
+        newCombo,
+        points: 0,
+        coinsEarned: 0,
+        bonusXP: 0,
+        bonusScore: 0,
+        shouldUpdateCombo: true,
+        shouldUpdateScore: false,      // Speed Test uses time, not score
+        shouldUpdatePowerBar: false,
+        shouldUpdateSpeedTest: true,   // let handleSuccessfulHit increment speedTestTargetsHit etc.
+        powerBarMultiplier: 1,
+      });
+
+      return;
+    }
+
+    // 5.b) ZEN MODE
+    if (gameMode === GAME_MODES.ZEN) {
+      const newCombo = combo + 1;
+
+      await handleSuccessfulHit(targetToProcess, {
+        hitType: 'zen',
+        newCombo,
+        points: 0,
+        coinsEarned: 0,
+        bonusXP: 0,
+        bonusScore: 0,
+        shouldUpdateCombo: true,
+        shouldUpdateScore: false,
+        shouldUpdatePowerBar: false,
+        shouldUpdateSpeedTest: false,
+        powerBarMultiplier: 1,
+      });
+
+      return;
+    }
+
+    // 5.c) CLASSIC / RUSH MODES – reuse existing hitType logic
+    const isDanger = !!targetToProcess.isDanger;
+    const isPowerUp = !!targetToProcess.isPowerUp;
+    const isLucky = !!targetToProcess.isLucky;
+
+    let hitType = 'normal';
+    if (isDanger) hitType = 'danger';
+    else if (isPowerUp) hitType = 'powerup';
+    else if (isLucky) hitType = 'lucky';
+
+    // Reuse existing scoring logic (points, coins, bonusXP, powerBarMultiplier etc.)
+    // but pipe it through handleSuccessfulHit.
+
+    let points = 10;
+    let coinsEarned = 0;
+    let bonusXP = 0;
+    let bonusScore = 0;
+    let powerBarMultiplier = 1;
+
+    if (hitType === 'danger') {
+      // let handleSuccessfulHit handle danger feedback (sound, health, particles)
+      await handleSuccessfulHit(targetToProcess, {
+        hitType,
+        newCombo: 0,
+        points: 0,
+        coinsEarned: 0,
+        bonusXP: 0,
+        bonusScore: 0,
+        shouldUpdateCombo: true,
+        shouldUpdateScore: false,
+        shouldUpdatePowerBar: false,
+        shouldUpdateSpeedTest: false,
+        powerBarMultiplier: 1,
+      });
+
+      // Danger-specific logic
+      const healthUpdated = updateHealthSafe(-1, 'danger_tap', runIdRef.current);
+      if (!healthUpdated) {
+        console.log(`[DANGER] Health update blocked`);
+      }
+
+      return;
+    }
+
+    if (hitType === 'powerup') {
+      // use existing power-up bonus logic
+      bonusScore = POWERUP_CONFIG.SCORE_MULTIPLIER * 50;
+      const bonusCoins = POWERUP_CONFIG.COIN_BONUS;
+      bonusXP = POWERUP_CONFIG.XP_BONUS;
+      powerBarMultiplier = 2; // 2x power bar fill for power-ups
+
+      const newCombo = combo + 1;
+      await handleSuccessfulHit(targetToProcess, {
+        hitType,
+        newCombo,
+        points: 0,
+        coinsEarned: bonusCoins,
+        bonusXP,
+        bonusScore,
+        shouldUpdateCombo: true,
+        shouldUpdateScore: true,
+        shouldUpdatePowerBar: true,
+        shouldUpdateSpeedTest: false,
+        powerBarMultiplier,
+      });
+
+      return;
+    }
+
+    if (hitType === 'lucky') {
+      // use existing lucky bonus logic
       const multiplier = getLuckyBonus();
       coinsEarned = multiplier * 5;
-      bonusText = `+${coinsEarned} 🪙`;
-      await soundManager.play('luckyTap');
-      setEarnedCoins(prev => prev + coinsEarned);
-      triggerHaptic('success');
-    } else {
-      points = calculateScore(points, newCombo, gameMode, rushComboMultiplier);
-      await soundManager.play('tap', newCombo);
-      console.log(`🎵 Sound test: tap played successfully (combo: ${newCombo}x)`);
-      
-      // Haptic feedback only for perfect hits (combo > 0)
-      if (newCombo > 0) {
-        triggerHaptic('light');
-      }
-    }
-    
-    // Log combo milestones
-    if (newCombo > 0 && newCombo % 10 === 0) {
-      console.log(`🔥 Combo milestone: ${newCombo}x`);
-    }
-    
-    // Power Bar: fill with perfect taps
-    if (newCombo > 0) {
-      const newPower = Math.min(100, powerBar + GAME_CONSTANTS.POWER_BAR_FILL_PER_TAP);
-      setPowerBar(newPower);
-      
-      // Activate power bar when full
-      if (newPower >= 100 && !powerBarActive) {
-        setPowerBarActive(true);
-        console.log('⚡ ReflexXP Power Bar ACTIVATED! 2× XP for 10s');
-      }
-    }
-    
-    // Floating score text with theme colors
-    const floatingText = {
-      id: `float-${Date.now()}`,
-      x: target.x + target.size / 2 - 20,
-      y: target.y,
-      text: bonusText || `+${points}`,
-      color: bonusText ? '#FFD93D' : currentTheme.primaryColor || target.color,
-    };
-    setFloatingTexts(prev => [...prev, floatingText]);
 
-    // Update score (Zen mode has no scoring)
-    if (gameMode !== GAME_MODES.ZEN) {
-      setScore(s => s + points);
+      const newCombo = combo + 1;
+      await handleSuccessfulHit(targetToProcess, {
+        hitType,
+        newCombo,
+        points: 10,
+        coinsEarned,
+        bonusXP: 0,
+        bonusScore: 0,
+        shouldUpdateCombo: true,
+        shouldUpdateScore: false, // Lucky doesn't give score, only coins
+        shouldUpdatePowerBar: true,
+        shouldUpdateSpeedTest: false,
+        powerBarMultiplier: 1,
+      });
+
+      return;
     }
-    setCombo(newCombo);
-    setMaxCombo(m => Math.max(m, newCombo));
-    
-    // Combo milestone: camera shake and effects for perfect combos
+
+    // NORMAL HIT (Classic / Rush)
+    {
+      const newCombo = combo + 1;
+
+      // Rush mode: combo multiplier
+      if (gameMode === GAME_MODES.RUSH) {
     if (newCombo % 5 === 0) {
-      await soundManager.play('combo', newCombo);
-      triggerCameraShake(); // Camera shake for combos > 5
-      
-      triggerHaptic('success');
+          const newMultiplier = rushComboMultiplier + 0.2;
+          setRushComboMultiplier(newMultiplier);
+          console.log(`💥 Rush Combo Multiplier: ${newMultiplier.toFixed(1)}x`);
+        }
+        points = calculateScore(points, newCombo, gameMode, rushComboMultiplier);
+      } else {
+        points = calculateScore(points, newCombo, gameMode, 1.0);
+      }
+
+      await handleSuccessfulHit(targetToProcess, {
+        hitType: 'normal',
+        newCombo,
+        points,
+        coinsEarned: 0,
+        bonusXP: 0,
+        bonusScore: 0,
+        shouldUpdateCombo: true,
+        shouldUpdateScore: true,
+        shouldUpdatePowerBar: true,
+        shouldUpdateSpeedTest: false,
+        powerBarMultiplier: 1,
+      });
     }
-  }, [combo, gameMode, rushComboMultiplier, powerBar, powerBarActive, currentTheme, triggerCameraShake, triggerHaptic]);
+  }, [
+    gameMode,
+    countdown,
+    gameActive,
+    combo,
+    maxCombo,
+    speedTestCompleted,
+    runIdRef,
+    gameOverRef,
+    rushComboMultiplier,
+    handleSuccessfulHit,
+    updateHealthSafe,
+    getLuckyBonus,
+    calculateScore,
+    setRushComboMultiplier,
+    setTargets,
+  ]);
 
   const handleMiss = () => {
     // Don't reset combo in Zen mode
@@ -968,6 +2926,116 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     setFloatingTexts(prev => prev.filter(t => t.id !== textId));
   }, []);
 
+  // 🎨 PREMIUM ESPORTS: Ensure currentTheme is always valid before rendering
+  // CRITICAL: Use currentTheme (which is updated by the effect when globalThemeData changes)
+  // This ensures React detects state changes and triggers re-renders
+  // Single source of truth: currentTheme is synced with globalThemeData via the effect
+  const resolvedTheme = (currentTheme && (currentTheme.accentColor || currentTheme.primaryColor)) 
+    ? currentTheme 
+    : (globalThemeData && globalThemeData.name && (globalThemeData.accentColor || globalThemeData.primaryColor))
+      ? globalThemeData
+      : getDefaultTheme();
+  
+  // === THEME SANITIZATION FIX START ===
+  // CRITICAL: Sanitize theme object to ensure ALL values are primitives (strings/numbers/booleans)
+  // React Native Fabric crashes if objects are passed to native props
+  const sanitizeTheme = (theme) => {
+    if (!theme || typeof theme !== 'object') {
+      return {
+        id: 'theme_default',
+        name: 'Classic Dark',
+        accentColor: '#00E5FF',
+        primaryColor: '#00E5FF',
+        backgroundColor: '#05070D',
+        gradientColors: ['#0A0F1A', '#1a1a2e'],
+        particleColors: ['#00E5FF', '#4ECDC4', '#00D9FF'],
+      };
+    }
+    
+    // Extract and validate all color values as strings
+    const safeAccentColor = typeof theme.accentColor === 'string' ? theme.accentColor : 
+                           (typeof theme.primaryColor === 'string' ? theme.primaryColor : '#00E5FF');
+    const safePrimaryColor = typeof theme.primaryColor === 'string' ? theme.primaryColor : safeAccentColor;
+    const safeSecondaryColor = typeof theme.secondaryAccent === 'string' ? theme.secondaryAccent :
+                              (typeof theme.secondaryColor === 'string' ? theme.secondaryColor : '#FF6B9D');
+    const safeBackgroundColor = typeof theme.backgroundColor === 'string' ? theme.backgroundColor : '#05070D';
+    
+    // Extract and validate glowColor as string (never object)
+    // CRITICAL: glowColor must always be a string, never an object
+    let safeGlowColor = null;
+    if (typeof theme.glowColor === 'string' && theme.glowColor.length > 0) {
+      safeGlowColor = theme.glowColor;
+    } else {
+      // Create rgba string from accentColor with opacity (fallback)
+      safeGlowColor = `${safeAccentColor}8C`; // Default opacity suffix
+    }
+    
+    // Extract and validate numeric values
+    const safeGlowRadius = typeof theme.glowRadius === 'number' ? theme.glowRadius : 12;
+    const safeGlowOpacity = typeof theme.glowOpacity === 'number' ? theme.glowOpacity : 0.55;
+    
+    // Extract and validate arrays (ensure all elements are strings)
+    const safeGradientColors = Array.isArray(theme.gradientColors) && theme.gradientColors.length > 0
+      ? theme.gradientColors.filter(c => typeof c === 'string')
+      : [ESPORTS_DARK_BACKGROUNDS.SECONDARY, '#1a1a2e'];
+    
+    const safeParticleColors = Array.isArray(theme.particleColors) && theme.particleColors.length > 0
+      ? theme.particleColors.filter(c => typeof c === 'string')
+      : ['#00E5FF', '#4ECDC4', '#00D9FF'];
+    
+    // Return sanitized theme with ONLY primitive values
+    return {
+      id: typeof theme.id === 'string' ? theme.id : 'theme_default',
+      name: typeof theme.name === 'string' ? theme.name : 'Classic Dark',
+      accentColor: safeAccentColor,
+      primaryColor: safePrimaryColor,
+      secondaryAccent: safeSecondaryColor,
+      secondaryColor: safeSecondaryColor,
+      backgroundColor: safeBackgroundColor,
+      glowColor: safeGlowColor,
+      glowRadius: safeGlowRadius,
+      glowOpacity: safeGlowOpacity,
+      gradientColors: safeGradientColors,
+      particleColors: safeParticleColors,
+      // Only include text colors if they are strings
+      textPrimary: typeof theme.textPrimary === 'string' ? theme.textPrimary : undefined,
+      textSecondary: typeof theme.textSecondary === 'string' ? theme.textSecondary : undefined,
+    };
+  };
+  
+  const safeTheme = sanitizeTheme(resolvedTheme);
+  // === THEME SANITIZATION FIX END ===
+  
+  // 🎨 PREMIUM ESPORTS: Always use esports dark background for global screen (never theme-dependent)
+  const safeBackgroundColor = ESPORTS_DARK_BACKGROUNDS.PRIMARY;
+  // Support both new token structure (accentColor) and legacy (primaryColor)
+  const safePrimaryColor = safeTheme.accentColor || safeTheme.primaryColor || '#00E5FF';
+  const safeSecondaryColor = safeTheme.secondaryAccent || safeTheme.secondaryColor || '#FF6B9D';
+  // 🎨 PREMIUM ESPORTS: Theme gradient applies ONLY to board area
+  const safeGradientColors = safeTheme.gradientColors;
+  
+  // 🔴 CRITICAL FIX: Log resolved theme for debugging - FINAL VERIFICATION
+  useEffect(() => {
+    console.log('🎨 FINAL THEME APPLIED IN GAMEPLAY:', {
+      id: safeTheme?.id,
+      name: safeTheme?.name,
+      accentColor: safeTheme?.accentColor || safeTheme?.primaryColor,
+      primaryColor: safeTheme?.primaryColor,
+      backgroundColor: safeTheme?.backgroundColor,
+      gradientColors: safeTheme?.gradientColors,
+      particleColors: safeTheme?.particleColors,
+    });
+    console.log('✨ ACTIVE PARTICLE EMOJI:', activeParticleEmoji || 'none');
+  }, [
+    safeTheme?.id, 
+    safeTheme?.name, 
+    safeTheme?.accentColor || safeTheme?.primaryColor, 
+    safeTheme?.backgroundColor, 
+    safeTheme?.gradientColors?.join(','), 
+    safeTheme?.particleColors?.join(','),
+    activeParticleEmoji
+  ]);
+
   if (screenDimensions.width === 0) {
     return <View style={styles.container} />;
   }
@@ -977,6 +3045,7 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       style={[
         styles.container,
         {
+          backgroundColor: safeBackgroundColor, // 🎨 PREMIUM ESPORTS: Premium dark background
           transform: [
             {
               translateX: shakeAnim,
@@ -985,33 +3054,40 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
         },
       ]}
     >
-      <SafeAreaView style={[styles.safeArea, { backgroundColor: currentTheme.backgroundColor }]}>
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: safeBackgroundColor }]}>
         {/* Combo Bar with theme colors */}
-        <ComboBar combo={combo} maxCombo={50} theme={currentTheme} />
+        <ComboBar combo={combo} maxCombo={50} theme={safeTheme} />
 
         {/* Power Bar */}
         {gameMode !== GAME_MODES.ZEN && (
-          <PowerBar power={powerBar} isActive={powerBarActive} theme={currentTheme} />
+          <PowerBar power={powerBar} isActive={powerBarActive} theme={safeTheme} />
         )}
 
         {/* HUD */}
         <View style={styles.hud}>
           <View style={styles.hudItem}>
-            <Text style={styles.hudLabel}>
-              {gameMode === GAME_MODES.SPEED_TEST ? 'Trial' : 'Score'}
+            <Text style={[styles.hudLabel, { color: safeTheme.textSecondary || '#BDC3C7' }]}>
+              {gameMode === GAME_MODES.SPEED_TEST ? 'Time' : 'Score'}
             </Text>
-            <Text style={[styles.hudValue, { color: currentTheme.primaryColor }]}>
-              {gameMode === GAME_MODES.SPEED_TEST ? `${speedTestTrials}/${GAME_CONSTANTS.SPEED_TEST_TRIALS}` :
+            <Text style={[styles.hudValue, { color: safePrimaryColor }]}>
+              {gameMode === GAME_MODES.SPEED_TEST ? formatTime(speedTestElapsedTimeRef.current || speedTestElapsedTime) :
                gameMode === GAME_MODES.ZEN ? '—' : score}
             </Text>
           </View>
-          {gameMode !== GAME_MODES.SPEED_TEST && (
+          {gameMode === GAME_MODES.SPEED_TEST ? (
             <View style={styles.hudItem}>
-              <Text style={styles.hudLabel}>Time</Text>
+              <Text style={[styles.hudLabel, { color: safeTheme.textSecondary || '#BDC3C7' }]}>Progress</Text>
+              <Text style={[styles.hudValue, { color: safePrimaryColor }]}>
+                {speedTestHitCountRef.current || speedTestTargetsHit}/{speedTestTargetCountRef.current || speedTestTargetCount}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.hudItem}>
+              <Text style={[styles.hudLabel, { color: safeTheme.textSecondary || '#BDC3C7' }]}>Time</Text>
               <Text
                 style={[
                   styles.hudValue,
-                  { color: currentTheme.primaryColor },
+                  { color: safePrimaryColor },
                   timeLeft <= 10 && styles.hudValueWarning,
                 ]}
               >
@@ -1021,54 +3097,94 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
           )}
           {gameMode === GAME_MODES.RUSH && (
             <View style={styles.hudItem}>
-              <Text style={styles.hudLabel}>Multiplier</Text>
-              <Text style={[styles.hudValue, { color: '#FF6B9D' }]}>
+              <Text style={[styles.hudLabel, { color: safeTheme.textSecondary || '#BDC3C7' }]}>Multiplier</Text>
+              <Text style={[styles.hudValue, { color: safeSecondaryColor }]}>
                 {rushComboMultiplier.toFixed(1)}×
               </Text>
             </View>
           )}
         </View>
 
-      {/* Health Bar */}
-      <View style={styles.healthBar}>
-        {Array.from({ length: GAME_CONSTANTS.MAX_HEALTH }).map((_, i) => (
-          <View
-            key={i}
-            style={[
-              styles.healthHeart,
-              i < health ? styles.healthHeartActive : styles.healthHeartInactive,
-            ]}
-          />
-        ))}
-      </View>
+      {/* Health Bar - Hidden in Speed Test mode */}
+      {gameMode !== GAME_MODES.SPEED_TEST && (
+        <View style={styles.healthBar}>
+          {Array.from({ length: GAME_CONSTANTS.MAX_HEALTH }).map((_, i) => (
+            <View
+              key={i}
+              style={[
+                styles.healthHeart,
+                i < health ? styles.healthHeartActive : styles.healthHeartInactive,
+              ]}
+            />
+          ))}
+        </View>
+      )}
 
-        {/* Game Area with theme background */}
+        {/* CRITICAL FIX: Speed Test Countdown Overlay */}
+        {gameMode === GAME_MODES.SPEED_TEST && countdown !== null && countdown > 0 && (
+          <View style={styles.countdownOverlay}>
+            <Animated.Text style={[styles.countdownText, {
+              color: safePrimaryColor,
+              transform: [{ scale: shakeAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [1, 1.5],
+              })}]
+            }]}>
+              {countdown}
+            </Animated.Text>
+            <Text style={styles.countdownSubtext}>Get Ready!</Text>
+          </View>
+        )}
+
+        {/* Game Area with theme background gradient */}
         <TouchableOpacity
           activeOpacity={1}
           onPress={handleMiss}
+          disabled={gameMode === GAME_MODES.SPEED_TEST && countdown !== null && countdown > 0}
           style={[
             styles.gameArea,
             {
               width: gameAreaWidth,
               height: gameAreaHeight,
-              backgroundColor: currentTheme.gradientColors[0] || 'rgba(26, 26, 46, 0.5)',
-              borderColor: currentTheme.primaryColor || '#4ECDC4',
+              borderColor: (typeof safeTheme.glowColor === 'string' ? safeTheme.glowColor : `${safePrimaryColor}4D`), // 🎨 PREMIUM ESPORTS: Use theme glow color with reduced opacity
+              opacity: (gameMode === GAME_MODES.SPEED_TEST && countdown !== null && countdown > 0) ? 0.3 : 1,
+              overflow: 'hidden', // 🔴 BUG #1 FIX: Ensure gradient doesn't overflow
             },
           ]}
         >
+          {/* 🔴 BUG #1 FIX: Use LinearGradient for theme background */}
+          <LinearGradient
+            colors={safeGradientColors}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              top: 0,
+              bottom: 0,
+            }}
+          />
+          {/* Game content rendered on top of gradient */}
+          <View style={{ position: 'relative', width: '100%', height: '100%' }}>
         {targets.map(target => (
           <NeonTarget
             key={target.id}
             target={target}
             onTap={handleTap}
             combo={combo}
+                theme={safeTheme}
           />
         ))}
         {particles.map(particle => (
           <Particle
             key={particle.id}
-            {...particle}
+                x={particle.x}
+                y={particle.y}
+                color={particle.color}
+                emoji={particle?.emoji ?? particle?.icon ?? particle?.character ?? null} // 🔴 SAFE_EMOJI_PATCH: Safe fallback
             onComplete={() => removeParticle(particle.id)}
+                theme={safeTheme}
           />
         ))}
         {floatingTexts.map(text => (
@@ -1078,6 +3194,7 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
             onComplete={() => removeFloatingText(text.id)}
           />
         ))}
+          </View>
         </TouchableOpacity>
 
         {/* Theme Unlock Popup */}
@@ -1095,8 +3212,8 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
           </Modal>
         )}
 
-        {/* Revive Modal */}
-        <Modal visible={showReviveOption} transparent animationType="fade">
+        {/* Revive Modal - CRITICAL FIX: Never show for Speed Test */}
+        <Modal visible={showReviveOption && gameMode !== GAME_MODES.SPEED_TEST} transparent animationType="fade">
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>💚 Continue?</Text>
@@ -1120,41 +3237,90 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
           </View>
         </Modal>
 
-        {/* Game Over Modal */}
-        <Modal visible={gameOver} transparent animationType="fade">
+        {/* ✅ TASK 1: Speed Test (Time-Attack Mode) Results Modal */}
+        <Modal visible={speedTestResultsVisible && speedTestCompleted} transparent animationType="fade">
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
-              {gameMode === GAME_MODES.SPEED_TEST ? (
+              <Text style={styles.modalTitle}>⚡ Speed Test Results</Text>
+              <View style={styles.statsContainer}>
+                <View style={styles.statRow}>
+                  <Text style={styles.statLabel}>Final Time:</Text>
+                  <Text style={[styles.statValue, { color: '#00E5FF', fontSize: 24, fontWeight: 'bold' }]}>
+                    {formatTime(speedTestElapsedTime)}s
+                  </Text>
+                </View>
+                <View style={styles.statRow}>
+                  <Text style={styles.statLabel}>Avg Reaction:</Text>
+                  <Text style={[styles.statValue, { color: '#FFD93D' }]}>
+                    {speedTestTargetsHit > 0 ? formatTime(speedTestElapsedTime / speedTestTargetsHit) : '0.000'}s
+                  </Text>
+                </View>
+                <View style={styles.statRow}>
+                  <Text style={styles.statLabel}>Accuracy:</Text>
+                  <Text style={[styles.statValue, { color: '#39FF14' }]}>
+                    {speedTestTargetsHit + speedTestTargetsMissed > 0 
+                      ? Math.round((speedTestTargetsHit / (speedTestTargetsHit + speedTestTargetsMissed)) * 100) 
+                      : 100}%
+                  </Text>
+                </View>
+                <View style={styles.statRow}>
+                  <Text style={styles.statLabel}>Rank:</Text>
+                  <Text style={[styles.statValue, { 
+                    color: calculateSpeedTestRank(speedTestElapsedTime) === 'S' ? '#FFD93D' :
+                           calculateSpeedTestRank(speedTestElapsedTime) === 'A' ? '#00E5FF' :
+                           calculateSpeedTestRank(speedTestElapsedTime) === 'B' ? '#39FF14' : '#FF6B9D',
+                    fontSize: 32,
+                    fontWeight: 'bold'
+                  }]}>
+                    {calculateSpeedTestRank(speedTestElapsedTime)}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity 
+                style={[styles.playAgainButton, !speedTestCanRestart && styles.buttonDisabled]} 
+                onPress={() => {
+                  if (!speedTestCanRestart) return;
+                  setSpeedTestResultsVisible(false);
+                  handlePlayAgain();
+                }}
+                disabled={!speedTestCanRestart}
+              >
+                <Text style={styles.playAgainButtonText}>Play Again</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.mainMenuButton} 
+                onPress={() => {
+                  if (!speedTestCanRestart) return;
+                  setSpeedTestResultsVisible(false);
+                  navigation.goBack();
+                }}
+                disabled={!speedTestCanRestart}
+              >
+                <Text style={styles.mainMenuButtonText}>Main Menu</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Game Over Modal */}
+        <Modal visible={gameOver && gameMode !== GAME_MODES.SPEED_TEST} transparent animationType="fade">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              {gameMode !== GAME_MODES.SPEED_TEST && (
                 <>
-                  <Text style={styles.modalTitle}>⚡ Speed Test Results</Text>
-                  <View style={styles.statsContainer}>
-                    <View style={styles.statRow}>
-                      <Text style={styles.statLabel}>Trials Completed:</Text>
-                      <Text style={styles.statValue}>{speedTestTimes.length}</Text>
-                    </View>
-                    <View style={styles.statRow}>
-                      <Text style={styles.statLabel}>Average:</Text>
-                      <Text style={[styles.statValue, { color: '#FFD93D' }]}>
-                        {speedTestTimes.length > 0 ? Math.round(speedTestTimes.reduce((a, b) => a + b, 0) / speedTestTimes.length) : 0}ms
-                      </Text>
-                    </View>
-                    <View style={styles.statRow}>
-                      <Text style={styles.statLabel}>Best:</Text>
-                      <Text style={[styles.statValue, { color: '#00E5FF' }]}>
-                        {speedTestTimes.length > 0 ? Math.min(...speedTestTimes) : 0}ms
-                      </Text>
-                    </View>
-                    <View style={styles.statRow}>
-                      <Text style={styles.statLabel}>Slowest:</Text>
-                      <Text style={[styles.statValue, { color: '#FF6B9D' }]}>
-                        {speedTestTimes.length > 0 ? Math.max(...speedTestTimes) : 0}ms
-                      </Text>
-                    </View>
-                  </View>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.modalTitle}>🎮 Game Over!</Text>
+                  <Text style={styles.modalTitle}>
+                    {gameWon ? '🎉 Victory!' : '💔 Game Over!'}
+                  </Text>
+                  {gameWon && (
+                    <Text style={styles.victorySubtitle}>
+                      You survived until time ran out!
+                    </Text>
+                  )}
+                  {!gameWon && (
+                    <Text style={styles.defeatSubtitle}>
+                      You ran out of lives!
+                    </Text>
+                  )}
                   <View style={styles.statsContainer}>
                     <View style={styles.statRow}>
                       <Text style={styles.statLabel}>Final Score:</Text>
@@ -1177,38 +3343,39 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
                       </Text>
                     </View>
                   </View>
-                </>
-              )}
-              
-              {gameMode !== GAME_MODES.SPEED_TEST && showDoubleReward ? (
-                <>
-                  <TouchableOpacity style={styles.adButton} onPress={handleDoubleReward}>
-                    <Text style={styles.adButtonText}>📺 Watch Ad → 2× Rewards!</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.skipButton} onPress={handleSkipAd}>
-                    <Text style={styles.skipButtonText}>Skip</Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <>
-                  <TouchableOpacity
-                    style={styles.shareButton}
-                    onPress={handleShare}
-                  >
-                    <Text style={styles.shareButtonText}>📤 Share Score</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.playAgainButton}
-                    onPress={handlePlayAgain}
-                  >
-                    <Text style={styles.playAgainButtonText}>Play Again</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.menuButton}
-                    onPress={handleMainMenu}
-                  >
-                    <Text style={styles.menuButtonText}>Main Menu</Text>
-                  </TouchableOpacity>
+                  
+                  {showDoubleReward ? (
+                    <>
+                      <TouchableOpacity style={styles.adButton} onPress={handleDoubleReward}>
+                        <Text style={styles.adButtonText}>📺 Watch Ad → 2× Rewards!</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.skipButton} onPress={handleSkipAd}>
+                        <Text style={styles.skipButtonText}>Skip</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <>
+                      {/* CRITICAL FIX: Professional button order - Primary action first */}
+                      <TouchableOpacity
+                        style={styles.playAgainButton}
+                        onPress={handlePlayAgain}
+                      >
+                        <Text style={styles.playAgainButtonText}>Play Again</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.menuButton}
+                        onPress={handleMainMenu}
+                      >
+                        <Text style={styles.menuButtonText}>Main Menu</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.shareButton}
+                        onPress={handleShare}
+                      >
+                        <Text style={styles.shareButtonText}>📤 Share Score</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
                 </>
               )}
             </View>
@@ -1225,6 +3392,7 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
               reactionTime={avgReactionTime || 0}
               onShare={() => setShowShareCard(false)}
               onClose={() => setShowShareCard(false)}
+              theme={safeTheme}
             />
           </View>
         </Modal>
@@ -1233,7 +3401,7 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   container: {
     flex: 1,
   },
@@ -1252,18 +3420,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   hudLabel: {
-    color: '#BDC3C7',
+    color: '#BDC3C7', // 🎨 PREMIUM ESPORTS: Clean esports text color
     fontSize: 12,
     fontWeight: '600',
+    letterSpacing: 0.5, // Sharp esports look
     marginBottom: 5,
   },
   hudValue: {
-    color: '#4ECDC4',
+    color: '#FFFFFF', // 🎨 PREMIUM ESPORTS: High contrast for readability (color set dynamically)
     fontSize: 28,
     fontWeight: 'bold',
-    textShadowColor: '#4ECDC4',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 10,
+    letterSpacing: 0.5, // Sharp esports look
+    textShadowColor: 'rgba(0, 0, 0, 0.5)', // Subtle shadow for depth
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   hudValueWarning: {
     color: '#FF6B6B',
@@ -1322,10 +3492,24 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 10,
     textShadowColor: '#4ECDC4',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 20,
+  },
+  victorySubtitle: {
+    color: '#39FF14',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  defeatSubtitle: {
+    color: '#FF6B6B',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 20,
   },
   modalText: {
     color: '#BDC3C7',
@@ -1416,8 +3600,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
+  buttonDisabled: {
+    opacity: 0.5,
+    backgroundColor: '#7F8C8D',
+  },
+  mainMenuButton: {
+    backgroundColor: '#7F8C8D',
+    paddingHorizontal: 30,
+    paddingVertical: 15,
+    borderRadius: 10,
+    marginTop: 10,
+  },
+  mainMenuButtonText: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
   playAgainButton: {
-    backgroundColor: '#4ECDC4',
+    backgroundColor: '#4ECDC4', // Primary - strongest color
     paddingVertical: 15,
     borderRadius: 10,
     alignItems: 'center',
@@ -1426,6 +3627,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowRadius: 20,
     elevation: 10,
+    borderWidth: 2,
+    borderColor: '#00E5FF',
   },
   playAgainButtonText: {
     color: '#1a1a2e',
@@ -1433,15 +3636,57 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   menuButton: {
-    backgroundColor: '#95A5A6',
+    backgroundColor: '#7F8C8D', // Secondary - medium color
     paddingVertical: 15,
     borderRadius: 10,
     alignItems: 'center',
     marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#95A5A6',
   },
   menuButtonText: {
     color: '#FFF',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  shareButton: {
+    backgroundColor: '#34495E', // Tertiary - subtle color
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+    opacity: 0.8,
+  },
+  shareButtonText: {
+    color: '#BDC3C7',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  countdownOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    zIndex: 1000,
+  },
+  countdownText: {
+    fontSize: 120,
+    fontWeight: 'bold',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 4 },
+    textShadowRadius: 20,
+  },
+  countdownSubtext: {
+    fontSize: 24,
+    color: '#FFF',
+    marginTop: 20,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 10,
   },
 });

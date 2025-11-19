@@ -1,5 +1,6 @@
 ﻿import React, { memo } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import { View, Text, Animated } from 'react-native';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { getComboTier } from '../utils/GameLogic';
 
 /**
@@ -7,7 +8,13 @@ import { getComboTier } from '../utils/GameLogic';
  * Displays current combo streak with tier indicators
  */
 const ComboBar = memo(function ComboBar({ combo, maxCombo, theme }) {
-  const currentTier = getComboTier(combo, theme);
+  // 🎨 PREMIUM ESPORTS: Support both new token structure and legacy
+  const themeForTier = theme ? {
+    ...theme,
+    primaryColor: theme.accentColor || theme.primaryColor,
+    secondaryColor: theme.secondaryAccent || theme.secondaryColor,
+  } : theme;
+  const currentTier = getComboTier(combo, themeForTier);
   const progress = Math.min(100, (combo / maxCombo) * 100);
 
   return (
@@ -40,7 +47,7 @@ const ComboBar = memo(function ComboBar({ combo, maxCombo, theme }) {
 
 export default ComboBar;
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   container: {
     width: '100%',
     paddingHorizontal: 20,

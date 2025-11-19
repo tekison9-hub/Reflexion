@@ -1,30 +1,56 @@
 ﻿import React, { useEffect, useRef, memo } from 'react';
-import { Text, StyleSheet, Animated } from 'react-native';
+import { Text, Animated } from 'react-native';
+import { createSafeStyleSheet } from '../utils/safeStyleSheet';
+import { 
+  ANIMATION_DURATION, 
+  ANIMATION_EASING, 
+  FLOATING_SCORE_CONFIG 
+} from '../utils/animationConstants';
 
 /**
  * FloatingScore Component (Memoized for performance)
  * Renders animated floating score text on tap
+ * Uses centralized animation constants for consistency
  */
-const FloatingScore = memo(function FloatingScore({ x, y, text, color, onComplete }) {
+const FloatingScore = memo(function FloatingScore({ x, y, text, color, onComplete, isCombo = false, isBonus = false }) {
   const translateY = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(1)).current;
+  const scale = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    // Entrance: scale up quickly
+    Animated.spring(scale, {
+      toValue: 1,
+      tension: 100,
+      friction: 7,
+      useNativeDriver: true,
+    }).start();
+
+    // Main animation: float up and fade out
     Animated.parallel([
       Animated.timing(translateY, {
-        toValue: -60,
-        duration: 1000,
+        toValue: -FLOATING_SCORE_CONFIG.DISTANCE,
+        duration: FLOATING_SCORE_CONFIG.DURATION,
+        easing: ANIMATION_EASING.EASE_OUT,
         useNativeDriver: true,
       }),
       Animated.timing(opacity, {
         toValue: 0,
-        duration: 1000,
+        duration: FLOATING_SCORE_CONFIG.DURATION,
+        easing: ANIMATION_EASING.EASE_OUT,
         useNativeDriver: true,
       }),
     ]).start(() => {
       if (onComplete) onComplete();
     });
   }, []);
+
+  // Determine font size based on type
+  const fontSize = isBonus 
+    ? FLOATING_SCORE_CONFIG.FONT_SIZE.BONUS 
+    : isCombo 
+    ? FLOATING_SCORE_CONFIG.FONT_SIZE.COMBO 
+    : FLOATING_SCORE_CONFIG.FONT_SIZE.NORMAL;
 
   return (
     <Animated.Text
@@ -34,7 +60,8 @@ const FloatingScore = memo(function FloatingScore({ x, y, text, color, onComplet
           left: x,
           top: y,
           color: color || '#FFD93D',
-          transform: [{ translateY }],
+          fontSize,
+          transform: [{ translateY }, { scale }],
           opacity,
           textShadowColor: color || '#FFD93D',
         },
@@ -47,10 +74,9 @@ const FloatingScore = memo(function FloatingScore({ x, y, text, color, onComplet
 
 export default FloatingScore;
 
-const styles = StyleSheet.create({
+const styles = createSafeStyleSheet({
   text: {
     position: 'absolute',
-    fontSize: 24,
     fontWeight: 'bold',
     textShadowRadius: 10,
     textShadowOffset: { width: 0, height: 0 },

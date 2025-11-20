@@ -4,12 +4,13 @@
  * Major value-add feature for market sale ($2,000-$3,000)
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { createSafeStyleSheet } from '../utils/safeStyleSheet';
@@ -26,7 +27,17 @@ const { TYPOGRAPHY } = theme;
 
 export default function StatsScreen({ navigation }) {
   // 🔴 FIX #2: Use GlobalStateContext for player data
-  const { playerData, loadPlayerData } = useGlobalState();
+  const { playerData, loadPlayerData, refreshPlayerData, isInitialized } = useGlobalState();
+  
+  // ✅ B3: Don't render until GlobalState is initialized
+  if (!isInitialized) {
+    return (
+      <SafeAreaView style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0a0a1a' }}>
+        <ActivityIndicator size="large" color="#4ECDC4" />
+        <Text style={{ color: '#4ECDC4', marginTop: 16 }}>Loading...</Text>
+      </SafeAreaView>
+    );
+  }
   
   const [stats, setStats] = useState({
     gamesPlayed: 0,
@@ -41,103 +52,121 @@ export default function StatsScreen({ navigation }) {
     maxCombo: 0,
     perfectGames: 0,
     totalTaps: 0,
+    // === AAA STATS: Per-mode games played ===
+    gamesPlayedClassic: 0,
+    gamesPlayedRush: 0,
+    gamesPlayedZen: 0,
+    gamesPlayedSpeedTest: 0,
   });
   const [loading, setLoading] = useState(true);
 
-  // 🔴 FIX #2: Reload data every time screen is focused (FIXED: No infinite loop)
+  const isLoadingRef = useRef(false); // ✅ Loading guard
+
+  // ✅ FIX #4: useFocusEffect - Fixed loading stuck issue with proper error handling
   useFocusEffect(
     useCallback(() => {
-      let isActive = true;
-      let mounted = true;
+      let isMounted = true;
       
       const loadStats = async () => {
+        // ✅ Guard: Zaten loading ise tekrar çalıştırma
+        if (isLoadingRef.current) {
+          console.log('⏸️ Stats already loading, skipping...');
+          return;
+        }
+        
+        isLoadingRef.current = true;
+        
         try {
-          if (!mounted) return;
+          if (!isMounted) return;
           setLoading(true);
           
-          // CRITICAL: Reload player data from GlobalStateContext first (if available)
-          if (loadPlayerData && typeof loadPlayerData === 'function') {
-            try {
-              await loadPlayerData();
-            } catch (loadError) {
-              console.warn('⚠️ Failed to reload player data:', loadError);
-            }
+          // 1. Context'i yenile (sadece 1 kez)
+          if (refreshPlayerData && typeof refreshPlayerData === 'function') {
+            await refreshPlayerData();
           }
           
-          // Get fresh data directly from AsyncStorage (same source as Main Menu)
-          const STORAGE_KEY = '@reflexion_player_data';
-          const playerDataRaw = await AsyncStorage.getItem(STORAGE_KEY);
-          let currentPlayerData = {};
+          // 2. Player data'yı al (context'ten güncel)
+          const currentData = playerData || {};
           
-          if (playerDataRaw) {
-            try {
-              currentPlayerData = JSON.parse(playerDataRaw);
-            } catch (parseError) {
-              console.error('❌ Failed to parse player data:', parseError);
-              currentPlayerData = {}; // Use empty defaults on parse error
-            }
-          } else {
-            // If storage is empty, use empty defaults (shouldn't happen in normal flow)
-            console.warn('⚠️ No player data found in storage');
-            currentPlayerData = {};
-          }
-          
-          // Load comprehensive stats from AsyncStorage
-          const statsData = await AsyncStorage.getItem('@player_stats');
+          // 3. Stats data'yı al (AsyncStorage'dan) - ✅ FIX #4: Add fallback defaults
           let parsedStats = {};
-          
-          if (statsData) {
-            try {
-              parsedStats = JSON.parse(statsData);
-            } catch (parseError) {
-              console.error('❌ Failed to parse stats data:', parseError);
-            }
+          try {
+            const statsData = await AsyncStorage.getItem('@player_stats');
+            parsedStats = statsData ? JSON.parse(statsData) : {};
+          } catch (storageError) {
+            console.warn('⚠️ Stats storage read error, using defaults:', storageError);
+            parsedStats = {}; // Use empty object as fallback
           }
-
-          // CRITICAL FIX: Use totalXp (source of truth) instead of xp
-          const totalXP = currentPlayerData?.totalXp ?? currentPlayerData?.xp ?? 0;
           
-          if (isActive && mounted) {
-            console.log('📊 Stats Screen - Loaded:', {
-              totalXP,
-              level: getLevelFromXP(totalXP),
-              coins: currentPlayerData?.coins || 0,
-              gamesPlayed: parsedStats.gamesPlayed || 0,
-            });
-            
-            setStats({
-              gamesPlayed: parsedStats.gamesPlayed || currentPlayerData?.gamesPlayed || 0,
-              highScoreClassic: parsedStats.highScoreClassic || 0,
-              highScoreRush: parsedStats.highScoreRush || 0,
-              highScoreZen: parsedStats.highScoreZen || 0,
-              totalXP: totalXP, // Use totalXp (source of truth)
-              fastestReaction: parsedStats.fastestReaction || 0,
-              totalPlaytime: parsedStats.totalPlaytime || 0,
-              averageAccuracy: parsedStats.averageAccuracy || 0,
-              totalCoins: currentPlayerData?.coins || 0,
-              maxCombo: parsedStats.maxCombo || currentPlayerData?.maxCombo || 0,
-              perfectGames: parsedStats.perfectGames || 0,
-              totalTaps: parsedStats.totalTaps || 0,
-            });
-            
-            setLoading(false);
-          }
+          if (!isMounted) return;
+          
+          // 4. State'i güncelle - ✅ FIX #4: Always set with fallback defaults
+          setStats({
+            gamesPlayed: currentData.gamesPlayed || 0,
+            totalXP: currentData.totalXp || 0,
+            totalCoins: currentData.coins || 0,
+            maxCombo: parsedStats.maxCombo || currentData.maxCombo || 0,
+            highScoreClassic: parsedStats.highScoreClassic || 0,
+            highScoreRush: parsedStats.highScoreRush || 0,
+            highScoreZen: parsedStats.highScoreZen || 0,
+            fastestReaction: parsedStats.fastestReaction || 0,
+            totalPlaytime: parsedStats.totalPlaytime || 0,
+            averageAccuracy: parsedStats.averageAccuracy || 0,
+            perfectGames: parsedStats.perfectGames || 0,
+            totalTaps: parsedStats.totalTaps || 0,
+            gamesPlayedClassic: parsedStats.gamesPlayedClassic || 0,
+            gamesPlayedRush: parsedStats.gamesPlayedRush || 0,
+            gamesPlayedZen: parsedStats.gamesPlayedZen || 0,
+            gamesPlayedSpeedTest: parsedStats.gamesPlayedSpeedTest || 0,
+          });
+          
+          console.log('✅ Stats loaded:', {
+            totalXP: currentData.totalXp,
+            level: getLevelFromXP(currentData.totalXp || 0),
+            gamesPlayed: currentData.gamesPlayed,
+          });
+          
         } catch (error) {
-          console.error('❌ Failed to load stats:', error);
-          if (isActive && mounted) {
+          console.error('❌ Stats load error:', error);
+          // ✅ FIX #4: Set default stats even on error
+          if (isMounted) {
+            setStats({
+              gamesPlayed: 0,
+              totalXP: 0,
+              totalCoins: 0,
+              maxCombo: 0,
+              highScoreClassic: 0,
+              highScoreRush: 0,
+              highScoreZen: 0,
+              fastestReaction: 0,
+              totalPlaytime: 0,
+              averageAccuracy: 0,
+              perfectGames: 0,
+              totalTaps: 0,
+              gamesPlayedClassic: 0,
+              gamesPlayedRush: 0,
+              gamesPlayedZen: 0,
+              gamesPlayedSpeedTest: 0,
+            });
+          }
+        } finally {
+          // ✅ FIX #4: ALWAYS set loading to false in finally block
+          if (isMounted) {
             setLoading(false);
           }
+          isLoadingRef.current = false;
         }
       };
       
       loadStats();
       
+      // Cleanup
       return () => {
-        isActive = false;
-        mounted = false;
-        setLoading(false); // Ensure loading is cleared on unmount
+        isMounted = false;
+        isLoadingRef.current = false;
+        setLoading(false); // ✅ FIX #4: Ensure loading is reset on unmount
       };
-    }, []) // Empty deps - only run when screen is focused, not when playerData changes
+    }, []) // ✅ FIX #4: Empty deps - only run on focus, not on playerData changes
   );
 
   const formatTime = (seconds) => {
@@ -156,13 +185,17 @@ export default function StatsScreen({ navigation }) {
 
   const level = getLevelFromXP(stats.totalXP);
 
-  const StatCard = ({ icon, label, value, color = '#4ECDC4', large = false }) => (
+  // === AAA STATS: StatCard with optional subtitle ===
+  const StatCard = ({ icon, label, value, color = '#4ECDC4', large = false, subtitle = null }) => (
     <View style={[styles.statCard, large && styles.statCardLarge]}>
       <Text style={[styles.statIcon, large && styles.statIconLarge]}>{icon}</Text>
       <Text style={[styles.statValue, { color }, large && styles.statValueLarge]}>
         {value}
       </Text>
       <Text style={[styles.statLabel, large && styles.statLabelLarge]}>{label}</Text>
+      {subtitle && (
+        <Text style={[styles.statSubtitle, large && styles.statSubtitleLarge]}>{subtitle}</Text>
+      )}
     </View>
   );
 
@@ -185,7 +218,8 @@ export default function StatsScreen({ navigation }) {
             <View style={styles.placeholder} />
           </View>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <Text style={{ color: '#FFF', fontSize: 16 }}>Loading...</Text>
+            <ActivityIndicator size="large" color="#4ECDC4" />
+            <Text style={{ color: '#FFF', fontSize: 16, marginTop: 10 }}>Loading Stats...</Text>
           </View>
         </LinearGradient>
       </SafeAreaView>
@@ -271,18 +305,21 @@ export default function StatsScreen({ navigation }) {
                 label="Classic Mode"
                 value={stats.highScoreClassic}
                 color="#4ECDC4"
+                subtitle={`${stats.gamesPlayedClassic} Games`}
               />
               <StatCard
                 icon="💥"
                 label="Rush Mode"
                 value={stats.highScoreRush}
                 color="#FF6B9D"
+                subtitle={`${stats.gamesPlayedRush} Games`}
               />
               <StatCard
                 icon="🧠"
                 label="Zen Mode"
                 value={stats.highScoreZen}
                 color="#C56CF0"
+                subtitle={`${stats.gamesPlayedZen} Games`}
               />
             </View>
           </View>
@@ -501,6 +538,15 @@ const styles = createSafeStyleSheet({
   },
   statLabelLarge: {
     fontSize: 14,
+  },
+  statSubtitle: {
+    fontSize: 10,
+    color: '#7F8C8D',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  statSubtitleLarge: {
+    fontSize: 11,
   },
   achievementPreview: {
     flexDirection: 'row',

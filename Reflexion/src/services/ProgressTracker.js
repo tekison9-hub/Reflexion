@@ -146,6 +146,9 @@ class ProgressTracker {
       // Save to storage
       await this.saveData();
 
+      // === AAA ACHIEVEMENTS: Check tiered achievements silently ===
+      await this.checkAchievements(session);
+
       console.log('✅ Game session recorded:', {
         score,
         avgReactionTime: session.avgReactionTime,
@@ -153,6 +156,124 @@ class ProgressTracker {
       });
     } catch (error) {
       console.error('❌ Failed to record game session:', error);
+    }
+  }
+
+  /**
+   * === AAA ACHIEVEMENTS: Tiered achievement system ===
+   * Checks and unlocks achievements based on player progress
+   * Runs silently in background when saveGameResult is called
+   */
+  async checkAchievements(session) {
+    try {
+      // Load current achievements
+      const achievementsData = await AsyncStorage.getItem(STORAGE_KEYS.MILESTONES);
+      const unlockedAchievements = achievementsData ? JSON.parse(achievementsData) : {};
+
+      // Calculate aggregate stats for achievement checks
+      const totalGames = this.gameSessions.length;
+      const totalScore = this.gameSessions.reduce((sum, s) => sum + (s.score || 0), 0);
+      const maxCombo = Math.max(...this.gameSessions.map(s => s.maxCombo || 0), 0);
+      const totalXP = this.gameSessions.reduce((sum, s) => sum + (s.xpEarned || 0), 0);
+      const totalCoins = this.gameSessions.reduce((sum, s) => sum + (s.coinsEarned || 0), 0);
+
+      // Tiered Achievement Definitions
+      const achievementTiers = {
+        // Games Played Tiers
+        games_10: { threshold: 10, name: 'Dedicated', desc: 'Play 10 games' },
+        games_25: { threshold: 25, name: 'Regular Player', desc: 'Play 25 games' },
+        games_50: { threshold: 50, name: 'Addicted', desc: 'Play 50 games' },
+        games_100: { threshold: 100, name: 'Veteran', desc: 'Play 100 games' },
+        games_250: { threshold: 250, name: 'Master', desc: 'Play 250 games' },
+        games_500: { threshold: 500, name: 'Legend', desc: 'Play 500 games' },
+
+        // Score Tiers
+        score_100: { threshold: 100, name: 'Century', desc: 'Score 100 points' },
+        score_500: { threshold: 500, name: 'High Scorer', desc: 'Score 500 points' },
+        score_1000: { threshold: 1000, name: 'Elite Player', desc: 'Score 1000 points' },
+        score_2500: { threshold: 2500, name: 'Champion', desc: 'Score 2500 points' },
+        score_5000: { threshold: 5000, name: 'Grandmaster', desc: 'Score 5000 points' },
+
+        // Combo Tiers
+        combo_5: { threshold: 5, name: 'Combo Starter', desc: 'Reach 5x combo' },
+        combo_10: { threshold: 10, name: 'Combo Master', desc: 'Reach 10x combo' },
+        combo_20: { threshold: 20, name: 'Combo Legend', desc: 'Reach 20x combo' },
+        combo_30: { threshold: 30, name: 'Combo God', desc: 'Reach 30x combo' },
+        combo_50: { threshold: 50, name: 'Combo Deity', desc: 'Reach 50x combo' },
+
+        // XP Tiers (based on total XP earned)
+        xp_1000: { threshold: 1000, name: 'Experienced', desc: 'Earn 1000 total XP' },
+        xp_5000: { threshold: 5000, name: 'Skilled', desc: 'Earn 5000 total XP' },
+        xp_10000: { threshold: 10000, name: 'Expert', desc: 'Earn 10000 total XP' },
+        xp_25000: { threshold: 25000, name: 'Elite', desc: 'Earn 25000 total XP' },
+
+        // Coins Tiers
+        coins_100: { threshold: 100, name: 'Collector', desc: 'Collect 100 total coins' },
+        coins_500: { threshold: 500, name: 'Wealthy', desc: 'Collect 500 total coins' },
+        coins_1000: { threshold: 1000, name: 'Rich', desc: 'Collect 1000 total coins' },
+        coins_5000: { threshold: 5000, name: 'Millionaire', desc: 'Collect 5000 total coins' },
+      };
+
+      // Check each achievement tier
+      let newAchievements = false;
+      for (const [key, achievement] of Object.entries(achievementTiers)) {
+        if (unlockedAchievements[key]) continue; // Already unlocked
+
+        let unlocked = false;
+        let currentValue = 0;
+
+        // Determine which stat to check based on achievement key
+        if (key.startsWith('games_')) {
+          currentValue = totalGames;
+          unlocked = totalGames >= achievement.threshold;
+        } else if (key.startsWith('score_')) {
+          // Check best score from any session
+          const bestScore = Math.max(...this.gameSessions.map(s => s.score || 0), 0);
+          currentValue = bestScore;
+          unlocked = bestScore >= achievement.threshold;
+        } else if (key.startsWith('combo_')) {
+          currentValue = maxCombo;
+          unlocked = maxCombo >= achievement.threshold;
+        } else if (key.startsWith('xp_')) {
+          currentValue = totalXP;
+          unlocked = totalXP >= achievement.threshold;
+        } else if (key.startsWith('coins_')) {
+          currentValue = totalCoins;
+          unlocked = totalCoins >= achievement.threshold;
+        }
+
+        if (unlocked) {
+          unlockedAchievements[key] = {
+            name: achievement.name,
+            desc: achievement.desc,
+            unlockedAt: Date.now(),
+            value: currentValue,
+          };
+          newAchievements = true;
+          console.log(`🏆 Achievement Unlocked: ${achievement.name} (${achievement.desc})`);
+        }
+      }
+
+      // Save achievements if any new ones were unlocked
+      if (newAchievements) {
+        await AsyncStorage.setItem(STORAGE_KEYS.MILESTONES, JSON.stringify(unlockedAchievements));
+        console.log('✅ Achievements saved');
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to check achievements:', error);
+    }
+  }
+
+  /**
+   * Get all unlocked achievements
+   */
+  async getAchievements() {
+    try {
+      const achievementsData = await AsyncStorage.getItem(STORAGE_KEYS.MILESTONES);
+      return achievementsData ? JSON.parse(achievementsData) : {};
+    } catch (error) {
+      console.warn('⚠️ Failed to load achievements:', error);
+      return {};
     }
   }
 

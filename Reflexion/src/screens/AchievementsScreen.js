@@ -68,20 +68,43 @@ export default function AchievementsScreen({ navigation, playerData: propPlayerD
     loadPlayerData();
   }, [propPlayerData, globalPlayerData]);
 
-  // ✅ TASK 2 FIX: Safe achievements with null checks
+  // === AAA ACHIEVEMENTS: Expanded tiered system (20+ achievements) ===
+  const totalXP = playerData?.totalXp ?? playerData?.xp ?? 0;
+  const level = Math.floor(totalXP / 100) + 1; // Simple level calculation
+  
   const achievements = [
+    // Games Played Tiers
     { id: 'first_win', name: 'First Victory', desc: 'Complete your first game', unlocked: (playerData?.gamesPlayed || 0) >= 1 },
-    { id: 'combo_5', name: 'Combo Starter', desc: 'Reach 5x combo', unlocked: (playerData.maxCombo || 0) >= 5 },
-    { id: 'combo_10', name: 'Combo Master', desc: 'Reach 10x combo', unlocked: (playerData.maxCombo || 0) >= 10 },
-    { id: 'combo_20', name: 'Combo Legend', desc: 'Reach 20x combo', unlocked: (playerData.maxCombo || 0) >= 20 },
-    { id: 'score_100', name: 'Century', desc: 'Score 100 points', unlocked: (playerData.highScore || 0) >= 100 },
-    { id: 'score_500', name: 'High Scorer', desc: 'Score 500 points', unlocked: (playerData.highScore || 0) >= 500 },
-    { id: 'score_1000', name: 'Elite Player', desc: 'Score 1000 points', unlocked: (playerData.highScore || 0) >= 1000 },
-    { id: 'level_5', name: 'Rising Star', desc: 'Reach level 5', unlocked: Math.floor(playerData.xp / 100) + 1 >= 5 },
-    { id: 'level_10', name: 'Pro Tapper', desc: 'Reach level 10', unlocked: Math.floor(playerData.xp / 100) + 1 >= 10 },
-    { id: 'games_10', name: 'Dedicated', desc: 'Play 10 games', unlocked: (playerData.gamesPlayed || 0) >= 10 },
-    { id: 'games_50', name: 'Addicted', desc: 'Play 50 games', unlocked: (playerData.gamesPlayed || 0) >= 50 },
-    { id: 'coins_500', name: 'Wealthy', desc: 'Collect 500 total coins', unlocked: (playerData.coins || 0) >= 500 },
+    { id: 'games_10', name: 'Novice', desc: 'Play 10 games', unlocked: (playerData?.gamesPlayed || 0) >= 10 },
+    { id: 'games_25', name: 'Regular', desc: 'Play 25 games', unlocked: (playerData?.gamesPlayed || 0) >= 25 },
+    { id: 'games_50', name: 'Dedicated', desc: 'Play 50 games', unlocked: (playerData?.gamesPlayed || 0) >= 50 },
+    { id: 'games_100', name: 'Veteran', desc: 'Play 100 games', unlocked: (playerData?.gamesPlayed || 0) >= 100 },
+    { id: 'games_250', name: 'Master', desc: 'Play 250 games', unlocked: (playerData?.gamesPlayed || 0) >= 250 },
+    
+    // Score Tiers
+    { id: 'score_100', name: 'Speedster I', desc: 'Score 100 points', unlocked: (playerData?.highScore || 0) >= 100 },
+    { id: 'score_250', name: 'Speedster II', desc: 'Score 250 points', unlocked: (playerData?.highScore || 0) >= 250 },
+    { id: 'score_500', name: 'High Scorer', desc: 'Score 500 points', unlocked: (playerData?.highScore || 0) >= 500 },
+    { id: 'score_1000', name: 'Elite Player', desc: 'Score 1000 points', unlocked: (playerData?.highScore || 0) >= 1000 },
+    { id: 'score_2000', name: 'God Mode', desc: 'Score 2000 points', unlocked: (playerData?.highScore || 0) >= 2000 },
+    
+    // Combo Tiers
+    { id: 'combo_5', name: 'Combo Starter', desc: 'Reach 5x combo', unlocked: (playerData?.maxCombo || 0) >= 5 },
+    { id: 'combo_10', name: 'Combo Master', desc: 'Reach 10x combo', unlocked: (playerData?.maxCombo || 0) >= 10 },
+    { id: 'combo_20', name: 'Combo Legend', desc: 'Reach 20x combo', unlocked: (playerData?.maxCombo || 0) >= 20 },
+    { id: 'combo_30', name: 'Combo God', desc: 'Reach 30x combo', unlocked: (playerData?.maxCombo || 0) >= 30 },
+    { id: 'combo_50', name: 'Combo Deity', desc: 'Reach 50x combo', unlocked: (playerData?.maxCombo || 0) >= 50 },
+    
+    // Level Tiers
+    { id: 'level_5', name: 'Rising Star', desc: 'Reach level 5', unlocked: level >= 5 },
+    { id: 'level_10', name: 'Pro Tapper', desc: 'Reach level 10', unlocked: level >= 10 },
+    { id: 'level_20', name: 'Expert', desc: 'Reach level 20', unlocked: level >= 20 },
+    { id: 'level_30', name: 'Elite', desc: 'Reach level 30', unlocked: level >= 30 },
+    
+    // Coins Tiers
+    { id: 'coins_100', name: 'Collector', desc: 'Collect 100 total coins', unlocked: (playerData?.coins || 0) >= 100 },
+    { id: 'coins_500', name: 'Wealthy', desc: 'Collect 500 total coins', unlocked: (playerData?.coins || 0) >= 500 },
+    { id: 'coins_1000', name: 'Rich', desc: 'Collect 1000 total coins', unlocked: (playerData?.coins || 0) >= 1000 },
   ];
 
   const unlockedCount = achievements.filter(a => a.unlocked).length;

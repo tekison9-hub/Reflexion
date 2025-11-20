@@ -147,120 +147,154 @@ export const GAME_CONSTANTS = {
 };
 
 /**
- * REFLEXION v5.0 PROFESSIONAL EDITION - XP Progression System
+ * REFLEXION AAA - PROGRESSIVE XP SYSTEM
+ * Mobile game industry standard progression curve
  * 
- * Linear progression system requiring meaningful time investment:
- * - Level 1 → 2: 1000 XP (baseline)
- * - Level 2 → 3: 1500 XP
- * - Level 3 → 4: 2000 XP
- * - Increases by +500 XP per level
- * 
- * Goal: 5-6 full games per level (balanced long-term progression)
+ * Level Tiers:
+ * 1-5:   Beginner    (100 XP/level)  - Hızlı ilerleme, oyuncuyu tutar
+ * 6-10:  Casual      (200 XP/level)  - Orta hız, mekanikler öğrenilir
+ * 11-20: Dedicated   (400 XP/level)  - Ciddi oyuncular için challenge
+ * 21-30: Hardcore    (800 XP/level)  - Uzun vadeli hedef
+ * 31+:   Legendary   (1200 XP/level) - Sonsuz ilerleme
  */
 
-// 🔴 FIX #1: REBALANCED LEVEL THRESHOLDS
-// Balanced progression: Takes 50-100 games to reach Level 10
-const LEVEL_THRESHOLDS_ARRAY = [
-  0,      // Level 1: 0 XP
-  100,    // Level 2: 100 XP
-  250,    // Level 3: 250 XP  
-  450,    // Level 4: 450 XP
-  700,    // Level 5: 700 XP
-  1000,   // Level 6: 1000 XP
-  1400,   // Level 7: 1400 XP
-  1900,   // Level 8: 1900 XP
-  2500,   // Level 9: 2500 XP
-  3200,   // Level 10: 3200 XP
-  4000,   // Level 11: 4000 XP
-  5000,   // Level 12: 5000 XP
-  6200,   // Level 13: 6200 XP
-  7600,   // Level 14: 7600 XP
-  9200,   // Level 15: 9200 XP
-  11000,  // Level 16: 11000 XP
-  13000,  // Level 17: 13000 XP
-  15500,  // Level 18: 15500 XP
-  18500,  // Level 19: 18500 XP
-  22000,  // Level 20: 22000 XP
-];
+// XP Tier Sistemini Tanımla
+const XP_TIERS = {
+  BEGINNER: { start: 1, end: 5, xpPerLevel: 100 },
+  CASUAL: { start: 6, end: 10, xpPerLevel: 200 },
+  DEDICATED: { start: 11, end: 20, xpPerLevel: 400 },
+  HARDCORE: { start: 21, end: 30, xpPerLevel: 800 },
+  LEGENDARY: { start: 31, end: Infinity, xpPerLevel: 1200 },
+};
 
-// Extend beyond level 20 with +5000 XP per level
-for (let i = 21; i <= 100; i++) {
-  LEVEL_THRESHOLDS_ARRAY.push(22000 + (i - 20) * 5000);
+/**
+ * Belirli bir level için hangi tier'da olduğunu bul
+ */
+function getTierForLevel(level) {
+  if (level <= XP_TIERS.BEGINNER.end) return XP_TIERS.BEGINNER;
+  if (level <= XP_TIERS.CASUAL.end) return XP_TIERS.CASUAL;
+  if (level <= XP_TIERS.DEDICATED.end) return XP_TIERS.DEDICATED;
+  if (level <= XP_TIERS.HARDCORE.end) return XP_TIERS.HARDCORE;
+  return XP_TIERS.LEGENDARY;
 }
 
 /**
- * Calculate cumulative XP needed to reach a specific level
- * NEW FORMULA: Balanced linear progression
- * @param {number} level - Target level (1-indexed)
- * @returns {number} Total XP required to reach this level
+ * Bir level'a ulaşmak için gereken toplam XP'yi hesapla
+ * @param {number} targetLevel - Hedef level (1-indexed)
+ * @returns {number} Toplam gereken XP
  */
-export function calculateXPNeeded(level) {
-  if (level <= 1) return 0;
-  if (level <= LEVEL_THRESHOLDS_ARRAY.length) {
-    return LEVEL_THRESHOLDS_ARRAY[level - 1];
+export function calculateXPNeeded(targetLevel) {
+  if (targetLevel <= 1) return 0;
+  
+  let totalXP = 0;
+  
+  // Her level için kümülatif XP hesapla
+  for (let level = 1; level < targetLevel; level++) {
+    const tier = getTierForLevel(level);
+    totalXP += tier.xpPerLevel;
   }
-  // Beyond level 100: +5000 XP per level
-  return LEVEL_THRESHOLDS_ARRAY[LEVEL_THRESHOLDS_ARRAY.length - 1] + (level - LEVEL_THRESHOLDS_ARRAY.length) * 5000;
+  
+  return totalXP;
 }
 
 /**
- * Get XP needed for next level from current level
- * @param {number} currentLevel - Current player level
- * @returns {number} XP needed to reach next level
+ * Mevcut level'dan bir sonraki level'a gereken XP
+ * @param {number} currentLevel - Şu anki level
+ * @returns {number} Bir sonraki level için gereken XP
  */
 export function getXPForNextLevel(currentLevel) {
   if (currentLevel < 1) return 100;
-  const currentThreshold = calculateXPNeeded(currentLevel);
-  const nextThreshold = calculateXPNeeded(currentLevel + 1);
-  return nextThreshold - currentThreshold;
+  const tier = getTierForLevel(currentLevel);
+  return tier.xpPerLevel;
 }
 
-// Pre-calculate thresholds for first 100 levels for performance
-export const LEVEL_THRESHOLDS = Array.from({ length: 101 }, (_, i) => 
+// Pre-calculate first 50 levels for performance
+export const LEVEL_THRESHOLDS = Array.from({ length: 51 }, (_, i) => 
   calculateXPNeeded(i + 1)
 );
 
 /**
- * Get player progress object (single source of truth)
- * @param {number} totalXP - Current total XP
+ * Toplam XP'den level hesapla
+ * @param {number} totalXP - Toplam kazanılmış XP
+ * @returns {number} Mevcut level
+ */
+export function getLevelFromXP(totalXP) {
+  if (totalXP <= 0) return 1;
+  
+  let level = 1;
+  let accumulatedXP = 0;
+  
+  // XP yeterli olduğu sürece level'i artır
+  while (accumulatedXP + getXPForNextLevel(level) <= totalXP) {
+    accumulatedXP += getXPForNextLevel(level);
+    level++;
+    
+    // Sonsuz döngü koruması
+    if (level > 1000) {
+      console.warn('⚠️ Level calculation exceeded 1000, capping');
+      break;
+    }
+  }
+  
+  return level;
+}
+
+/**
+ * Player progression objesi (single source of truth)
+ * @param {number} totalXP - Toplam XP
  * @returns {object} { level, currentXp, xpToNextLevel, totalXp }
  */
 export function getPlayerProgress(totalXP) {
-  // CRITICAL FIX: Validate input parameter (safe access)
-  const safeTotalXP = typeof totalXP === 'number' && !isNaN(totalXP) ? Math.max(0, totalXP) : 0;
+  const safeTotalXP = typeof totalXP === 'number' && !isNaN(totalXP) ? Math.max(0, Math.floor(totalXP)) : 0;
   
-  try {
-    const level = getLevelFromXP(safeTotalXP);
-    const xpForCurrentLevel = calculateXPNeeded(level);
-    const xpToNextLevel = getXPForNextLevel(level);
-    const currentXp = safeTotalXP - xpForCurrentLevel;
-    
-    return {
-      level: Math.max(1, level),
-      currentXp: Math.max(0, currentXp),
-      xpToNextLevel: Math.max(100, xpToNextLevel),
-      totalXp: safeTotalXP, // CRITICAL: Always return totalXp
-    };
-  } catch (error) {
-    console.error('❌ CRITICAL: Error in getPlayerProgress:', error);
-    // Return safe defaults
-    return {
-      level: 1,
-      currentXp: 0,
-      xpToNextLevel: 100,
-      totalXp: safeTotalXP,
-    };
-  }
+  const level = getLevelFromXP(safeTotalXP);
+  const xpForCurrentLevel = calculateXPNeeded(level);
+  const xpToNextLevel = getXPForNextLevel(level);
+  const currentXp = safeTotalXP - xpForCurrentLevel;
+  
+  return {
+    level: Math.max(1, level),
+    currentXp: Math.max(0, Math.floor(currentXp)),
+    xpToNextLevel: Math.max(100, xpToNextLevel),
+    totalXp: safeTotalXP,
+  };
 }
 
-// Log progression curve for debugging
-console.log('📊 Reflexion - REBALANCED XP Curve:', {
-  'Level 2': calculateXPNeeded(2) + ' XP (need ' + getXPForNextLevel(1) + ')',
-  'Level 3': calculateXPNeeded(3) + ' XP (need ' + getXPForNextLevel(2) + ')',
-  'Level 5': calculateXPNeeded(5) + ' XP (need ' + getXPForNextLevel(4) + ')',
-  'Level 10': calculateXPNeeded(10) + ' XP (need ' + getXPForNextLevel(9) + ')',
-  'Level 20': calculateXPNeeded(20) + ' XP (need ' + getXPForNextLevel(19) + ')',
-});
+/**
+ * XP progress yüzdesi (0-100)
+ * @param {number} totalXP - Toplam XP
+ * @returns {number} Progress (0-100)
+ */
+export function getXPProgress(totalXP) {
+  const progress = getPlayerProgress(totalXP);
+  if (progress.xpToNextLevel <= 0) return 0;
+  return Math.min(100, Math.max(0, (progress.currentXp / progress.xpToNextLevel) * 100));
+}
+
+/**
+ * Level tier bilgisi (UI için)
+ * @param {number} level - Level
+ * @returns {object} { name, color, icon }
+ */
+export function getLevelTierInfo(level) {
+  if (level <= 5) return { name: 'Beginner', color: '#4ECDC4', icon: '🌟' };
+  if (level <= 10) return { name: 'Casual', color: '#00D9FF', icon: '⚡' };
+  if (level <= 20) return { name: 'Dedicated', color: '#C56CF0', icon: '🔥' };
+  if (level <= 30) return { name: 'Hardcore', color: '#FF6B9D', icon: '💎' };
+  return { name: 'Legendary', color: '#FFD93D', icon: '👑' };
+}
+
+// Debug log - Progression curve
+console.log('🎮 AAA XP Progression Curve:');
+console.log('Level 2:', calculateXPNeeded(2), 'XP (need', getXPForNextLevel(1), ')');
+console.log('Level 5:', calculateXPNeeded(5), 'XP (need', getXPForNextLevel(4), ')');
+console.log('Level 6:', calculateXPNeeded(6), 'XP (need', getXPForNextLevel(5), ')');
+console.log('Level 10:', calculateXPNeeded(10), 'XP (need', getXPForNextLevel(9), ')');
+console.log('Level 11:', calculateXPNeeded(11), 'XP (need', getXPForNextLevel(10), ')');
+console.log('Level 20:', calculateXPNeeded(20), 'XP (need', getXPForNextLevel(19), ')');
+console.log('Level 21:', calculateXPNeeded(21), 'XP (need', getXPForNextLevel(20), ')');
+console.log('Level 30:', calculateXPNeeded(30), 'XP (need', getXPForNextLevel(29), ')');
+console.log('Level 31:', calculateXPNeeded(31), 'XP (need', getXPForNextLevel(30), ')');
 
 // ELITE v3.0: Danger Point System Configuration
 export const DANGER_CONFIG = {
@@ -727,31 +761,6 @@ export function getXPRequired(level) {
   return calculateXPNeeded(level);
 }
 
-// Removed duplicate - using v5.0 implementation at line 186
-
-/**
- * Calculate level from total XP
- * @param {number} totalXP - Total accumulated XP
- * @returns {number} - Current level
- */
-export function getLevelFromXP(totalXP) {
-  // CRITICAL FIX: Validate input parameter (safe access)
-  const safeTotalXP = typeof totalXP === 'number' && !isNaN(totalXP) ? Math.max(0, totalXP) : 0;
-  
-  try {
-    // Find the highest level where XP >= threshold
-    for (let level = LEVEL_THRESHOLDS.length; level >= 1; level--) {
-      if (safeTotalXP >= getXPRequired(level)) {
-        return level;
-      }
-    }
-    return 1; // Minimum level
-  } catch (error) {
-    console.error('❌ CRITICAL: Error in getLevelFromXP:', error);
-    return 1; // Safe fallback
-  }
-}
-
 /**
  * Add XP and calculate level progression
  * @param {number} currentXP - Current total XP
@@ -772,46 +781,7 @@ export function addXP(currentXP, currentLevel, xpGain) {
   };
 }
 
-/**
- * Get progress percentage to next level
- * @param {number} currentXP - Current total XP
- * @param {number} currentLevel - Current level
- * @returns {number} - Progress percentage (0-100)
- */
-export function getXPProgress(currentXP, currentLevel) {
-  // CRITICAL FIX: Add safety checks to prevent NaN
-  if (!currentXP || currentXP < 0 || !currentLevel || currentLevel < 1) {
-    return 0;
-  }
-  
-  const currentThreshold = getXPRequired(currentLevel);
-  const nextThreshold = getXPRequired(currentLevel + 1);
-  
-  // CRITICAL FIX: Validate thresholds to prevent division by zero or NaN
-  if (isNaN(currentThreshold) || isNaN(nextThreshold) || currentThreshold < 0 || nextThreshold < 0) {
-    console.warn(`⚠️ getXPProgress: Invalid thresholds for level ${currentLevel}`, { currentThreshold, nextThreshold });
-    return 0;
-  }
-  
-  const xpIntoLevel = currentXP - currentThreshold;
-  const xpNeeded = nextThreshold - currentThreshold;
-  
-  // CRITICAL FIX: Prevent division by zero
-  if (xpNeeded <= 0) {
-    console.warn(`⚠️ getXPProgress: Zero or negative XP needed for level ${currentLevel}`, { xpNeeded });
-    return 100; // If no XP needed, consider it 100% complete
-  }
-  
-  const progress = (xpIntoLevel / xpNeeded) * 100;
-  
-  // CRITICAL FIX: Validate result and clamp to 0-100
-  if (isNaN(progress) || !isFinite(progress)) {
-    console.warn(`⚠️ getXPProgress: Invalid progress calculation`, { currentXP, currentLevel, xpIntoLevel, xpNeeded, progress });
-    return 0;
-  }
-  
-  return Math.min(100, Math.max(0, progress));
-}
+// Removed duplicate getXPProgress - using AAA version above (line 268)
 
 /**
  * Calculate combo bonus XP

@@ -8,6 +8,14 @@ import {
   Animated,
   Share,
 } from 'react-native';
+import AnimatedReanimated, { 
+  useSharedValue, 
+  useAnimatedStyle, 
+  withSequence, 
+  withTiming, 
+  withRepeat,
+  Easing 
+} from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -63,7 +71,7 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   // 🔴 SAFE_EMOJI_PATCH: Applied safe emoji access pattern throughout
   console.log("SAFE_EMOJI_PATCH_APPLIED");
   
-  const { playerData: globalPlayerData, updatePlayerData, addCoins, addXP } = useGlobalState();
+  const { playerData: globalPlayerData, updatePlayerData, addCoins, addXP, refreshPlayerData } = useGlobalState();
   const { themeData: globalThemeData } = useTheme(); // CRITICAL FIX: Use global theme
   const playerData = globalPlayerData || propPlayerData;
   // Get game mode from route params (default to Classic)
@@ -247,7 +255,30 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   const speedTestInitializedRef = useRef(false);
   const [avgReactionTime, setAvgReactionTime] = useState(0);
   const [unlockedTheme, setUnlockedTheme] = useState(null);
+  // === AAA GAME JUICE: Reanimated Screen Shake ===
+  // Old Animated.Value kept for countdown compatibility
   const [shakeAnim] = useState(new Animated.Value(0));
+  
+  // New Reanimated shake for gameplay events (better performance)
+  const shakeOffset = useSharedValue(0);
+  
+  const animatedShakeStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ translateX: shakeOffset.value }]
+    };
+  });
+  
+  // AAA Game Juice: Enhanced shake trigger for danger/miss events
+  const triggerShake = useCallback(() => {
+    'worklet';
+    shakeOffset.value = withSequence(
+      withTiming(10, { duration: 50, easing: Easing.out(Easing.quad) }),
+      withTiming(-10, { duration: 50, easing: Easing.inOut(Easing.quad) }),
+      withTiming(10, { duration: 50, easing: Easing.inOut(Easing.quad) }),
+      withTiming(-10, { duration: 50, easing: Easing.inOut(Easing.quad) }),
+      withTiming(0, { duration: 50, easing: Easing.in(Easing.quad) })
+    );
+  }, [shakeOffset]);
   
   // ✅ TASK 1: Speed Test (Time-Attack Mode) State
   const [speedTestStartTime, setSpeedTestStartTime] = useState(0);
@@ -682,9 +713,11 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
         setGameActive(false);
       }
         
-        // SoundManager cleanup
+        // ✅ FIX #3: Stop all music and sounds when unmounting
         try {
           soundManager.stopAll();
+          musicManager.stopAll(); // Stop game music
+          musicManager.playMenuMusic(); // Ensure menu music plays
         } catch (e) {
           // Fail silently if soundManager not available
         }
@@ -1328,37 +1361,37 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     // CRITICAL FIX: Speed Test mode has no time limit - timer only for Classic/Rush/Zen
     if (gameMode === GAME_MODES.SPEED_TEST) return;
 
+    // ✅ FIX #1: Timer ONLY ticks - no game over logic here
     gameTimerRef.current = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          // Time ran out - check if player won (has health) or lost (no health)
-          // Use functional update to get current health value
-          setHealth(currentHealth => {
-            if (currentHealth > 0) {
-            setGameWon(true); // Player won - survived until time ran out
-          } else {
-            setGameWon(false); // Player lost - no health left
-          }
-            return currentHealth; // Don't change health, just read it
-          });
-          setGameActive(false);
-          // 🔴 RUSH MODE FIX: Ensure game over is triggered when time runs out
-          // Use setTimeout to allow state updates to complete first
-          setTimeout(() => {
-            gameOverRef.current = true;
-            setGameOver(true);
-            // handleGameOver will be called by the game over effect
-          }, 150);
-          return 0;
-        }
-        return prev - 1;
-      });
+      setTimeLeft(prev => Math.max(0, prev - 1));
     }, 1000);
 
     return () => {
       if (gameTimerRef.current) clearInterval(gameTimerRef.current);
     };
   }, [gameActive, gameMode]);
+
+  // ✅ FIX #1: NEW useEffect - Watch timeLeft to trigger Game Over with FRESH state
+  useEffect(() => {
+    if (gameMode !== GAME_MODES.SPEED_TEST && gameActive && timeLeft <= 0) {
+      console.log('⏰ TIME UP! Triggering Game Over with Score:', score);
+      
+      // Check if player won (has health) or lost (no health)
+      setHealth(currentHealth => {
+        if (currentHealth > 0) {
+          setGameWon(true); // Player won - survived until time ran out
+        } else {
+          setGameWon(false); // Player lost - no health left
+        }
+        return currentHealth; // Don't change health, just read it
+      });
+      
+      setGameActive(false);
+      gameOverRef.current = true;
+      setGameOver(true);
+      // handleGameOver will be called by the game over effect
+    }
+  }, [timeLeft, gameActive, gameMode, score]); // ✅ 'score' dependency ensures fresh data
 
   // Power Bar active timer
   useEffect(() => {
@@ -1448,261 +1481,212 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     }
   }, [gameActive, gameOver, showReviveOption, hasRevived, health, gameMode, timeLeft, speedTestCompleted]); // 🔴 FIX: Added speedTestCompleted to deps
 
+  // ✅ B1: finalizeRun - Single function for XP/coin/stats processing
+  const hasFinalizedRef = useRef(false);
+  
+  const finalizeRun = useCallback(
+    async ({ xpEarned, coinsEarned, gameStats }) => {
+      if (hasFinalizedRef.current) {
+        console.log('⏭️ finalizeRun already called, skipping');
+        return;
+      }
+      hasFinalizedRef.current = true;
+
+      try {
+        const isXpMode = gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH;
+
+        // Get old level for level up sound
+        const oldTotalXp = playerData?.totalXp || 0;
+        const oldLevel = getLevelFromXP(oldTotalXp);
+
+        // 1) XP → sadece Classic & Rush (NEVER write to AsyncStorage directly)
+        if (isXpMode && xpEarned > 0 && typeof addXP === 'function') {
+          await addXP(xpEarned);
+          console.log(`✅ XP added: ${xpEarned}`);
+          
+          // Check for level up after XP is added
+          const newTotalXp = oldTotalXp + xpEarned;
+          const newLevel = getLevelFromXP(newTotalXp);
+          if (newLevel > oldLevel) {
+            soundManager.play('levelUp');
+            console.log(`🎉 Level Up! ${oldLevel} → ${newLevel}`);
+          }
+          
+          // Refresh context to update UI
+          if (refreshPlayerData && typeof refreshPlayerData === 'function') {
+            await refreshPlayerData();
+          }
+        }
+
+        // 2) Coins
+        if (coinsEarned > 0 && typeof addCoins === 'function') {
+          await addCoins(coinsEarned);
+          console.log(`✅ Coins added: ${coinsEarned}`);
+        }
+
+        // 3) Global playerData istatistik patch'i
+        const patch = {
+          gamesPlayed: (playerData?.gamesPlayed || 0) + 1,
+          lastUpdated: Date.now(),
+        };
+
+        if (gameMode === GAME_MODES.CLASSIC) {
+          patch.gamesPlayedClassic = (playerData?.gamesPlayedClassic || 0) + 1;
+        } else if (gameMode === GAME_MODES.RUSH) {
+          patch.gamesPlayedRush = (playerData?.gamesPlayedRush || 0) + 1;
+        } else if (gameMode === GAME_MODES.ZEN) {
+          patch.gamesPlayedZen = (playerData?.gamesPlayedZen || 0) + 1;
+        } else if (gameMode === GAME_MODES.SPEED_TEST) {
+          patch.gamesPlayedSpeedTest = (playerData?.gamesPlayedSpeedTest || 0) + 1;
+        }
+
+        if (typeof updatePlayerData === 'function') {
+          await updatePlayerData(patch);
+        }
+
+        // 4) ProgressTracker için oturum kaydı
+        try {
+          if (progressTracker && typeof progressTracker.recordGameSession === 'function') {
+            progressTracker.recordGameSession({
+              mode: gameMode,
+              score,
+              maxCombo,
+              xpEarned: isXpMode ? xpEarned : 0,
+              coinsEarned: coinsEarned,
+            });
+          }
+        } catch (trackerError) {
+          console.warn('[ProgressTracker] recordGameSession failed', trackerError);
+        }
+      } catch (err) {
+        console.error('❌ finalizeRun failed', err);
+      }
+    },
+    [gameMode, playerData, addXP, addCoins, updatePlayerData, refreshPlayerData, score, maxCombo]
+  );
+
   const handleGameOver = async () => {
-    // 🔴 RUSH MODE FIX: Prevent multiple calls to handleGameOver using ref
-    // 🔴 BUG #2 FIX: Use actual game mode for logging
-    const modeTag = gameMode ? `[${gameMode.toUpperCase().replace('_', ' ')}]` : '[GAME]';
-    if (gameOverRef.current || gameOver) {
-      console.log(`${modeTag} handleGameOver already called, skipping duplicate`);
-      return;
-    }
-    
-    console.log(`${modeTag} handleGameOver called - setting gameOver=true`);
+    // Prevent duplicate calls
+    if (gameOverRef.current || gameOver) return;
+
+    console.log(`🏁 GAME OVER: ${gameMode} | Score: ${score} | Time: ${speedTestElapsedTimeRef.current}ms`);
     gameOverRef.current = true;
     setGameOver(true);
-    
-    // 🔴 BUG FIX: Safe sound play
+    hasFinalizedRef.current = false; // ✅ B1: Reset finalization flag for new game
+
     try {
-      const playResult = soundManager.play('gameOver');
-      if (playResult && typeof playResult.then === 'function') {
-        await playResult;
-      }
-    } catch (error) {
-      console.warn('⚠️ Error playing game over sound:', error);
-    }
+      soundManager.play('gameOver');
+    } catch (e) {}
     
-    // 🔍 XP CALC DEBUG: Log game end state
-    console.log('🔍 XP CALC DEBUG - Game Over State:');
-    console.log('  Health:', health);
-    console.log('  Game Won:', gameWon);
-    console.log('  Score:', score);
-    console.log('  Max Combo:', maxCombo);
-    console.log('  Game Mode:', gameMode);
-    console.log('  Time Left:', timeLeft);
-    
-    // 🔴 XP/COIN BUG FIX: Determine win/loss state correctly for Classic and Rush modes
-    // Win condition: gameWon === true (survived until time ran out OR completed Speed Test)
-    // Lose condition: gameWon === false (died) → Reduced rewards
-    // CRITICAL: For Speed Test, always count as victory if completed
-    // CRITICAL FIX: For Classic/Rush, check both gameWon state AND health > 0 as fallback
-    // IMPORTANT: Use health > 0 as primary check since gameWon state might not be updated yet
-    let didSucceed = false;
+    // --- 1. CALCULATE REWARDS ---
+    // Win Condition: Speed Test Completed OR Health > 0 (Classic/Rush)
+    const isVictory = (gameMode === GAME_MODES.SPEED_TEST && speedTestCompleted) || health > 0;
+
+    // ✅ B2: XP calculation - Speed Test & Zen get 0 XP
+    let xpEarned = 0;
+    let coinsEarned = 0;
+
     if (gameMode === GAME_MODES.SPEED_TEST) {
-      didSucceed = speedTestCompleted;
-    } else {
-      // 🔴 XP/COIN BUG FIX: Check health first (more reliable than gameWon state)
-      // If health > 0, player survived (victory)
-      // If health <= 0, player died (defeat)
-      // Also check gameWon as secondary check
-      didSucceed = health > 0 || gameWon === true;
-    }
-    
-    console.log('  Is Victory:', didSucceed);
-    console.log('  gameWon state:', gameWon);
-    console.log('  health:', health);
-    console.log('  timeLeft:', timeLeft);
-    
-    let xp = 0;
-    let coins = 0;
-    
-    // 🔴 XP/COIN BUG FIX: REBALANCED XP CALCULATION
-    // New balanced formula: Base XP from score (0.15x) + Combo bonus (2x) + Mode multiplier
-    const calculateXP = (score, maxCombo, gameMode) => {
-      // Base XP from score (reduced significantly)
-      const baseXP = Math.floor(score * 0.15);
-      
-      // Bonus from combo
-      const comboBonus = Math.floor(maxCombo * 2);
-      
-      // Mode multiplier
-      const modeMultipliers = {
-        [GAME_MODES.CLASSIC]: 1.0,
-        [GAME_MODES.RUSH]: 1.2,
-        [GAME_MODES.ZEN]: 0.5,
-        [GAME_MODES.SPEED_TEST]: 0.8,
-      };
-      const modeMultiplier = modeMultipliers[gameMode] || 1.0;
-      
-      // Calculate total
-      const totalXP = Math.floor((baseXP + comboBonus) * modeMultiplier);
-      
-      console.log('🎮 XP CALCULATION:');
-      console.log('  Score:', score);
-      console.log('  Base XP (score * 0.15):', baseXP);
-      console.log('  Combo Bonus (combo * 2):', comboBonus);
-      console.log('  Mode Multiplier:', modeMultiplier);
-      console.log('  Total XP:', totalXP);
-      
-      return totalXP;
-    };
-    
-    // 🔴 XP/COIN BUG FIX: Always calculate XP/coins, even if score is 0
-    // This ensures players get at least minimal rewards for playing
-    if (didSucceed) {
-      // Calculate XP using new balanced formula
-      xp = calculateXP(score, maxCombo, gameMode);
-      
-      // Power Bar multiplier (applied after base calculation)
-      if (powerBarActive) {
-        xp = Math.floor(xp * GAME_CONSTANTS.POWER_BAR_XP_MULTIPLIER);
-        console.log('  Power Bar Active - Final XP (×2):', xp);
-      }
-      
-      // Coins calculation
-      coins = Math.floor(score / 40) + Math.floor(maxCombo / 6);
-      
-      // 🔴 XP/COIN BUG FIX: Ensure minimum rewards for victory
-      if (xp === 0 && score > 0) {
-        xp = Math.max(1, Math.floor(score * 0.1)); // Minimum 10% of score as XP
-      }
-      if (coins === 0 && score > 0) {
-        coins = Math.max(1, Math.floor(score / 100)); // Minimum 1 coin per 100 score
-      }
-      
-      console.log('💰 REWARDS CALCULATED (VICTORY):');
-      console.log('  Final XP:', xp);
-      console.log('  Final Coins:', coins);
-      debugEvents.gameEnd(score, 0, maxCombo, xp);
-    } else {
-      // CRITICAL FIX: Lose penalty - 25% of normal XP (never zero)
+      // ✅ B2: Speed Test - NO XP/Coins (leaderboard only)
+      xpEarned = 0;
+      coinsEarned = 0;
+    } else if (gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH) {
+      // Classic/Rush Logic - XP for both win and lose
       const baseXP = Math.floor(score * 0.15);
       const comboBonus = Math.floor(maxCombo * 2);
-      const totalBaseXP = baseXP + comboBonus;
-      xp = Math.max(1, Math.floor(totalBaseXP * 0.25)); // 25% penalty, minimum 1 XP
-      coins = 0; // No coins on loss
-      
-      console.log('💰 REWARDS CALCULATED (DEFEAT):');
-      console.log('  Base XP:', baseXP);
-      console.log('  Combo Bonus:', comboBonus);
-      console.log('  Total Base XP:', totalBaseXP);
-      console.log('  Penalty (25%):', xp);
-      console.log('  Final Coins:', coins);
-      debugEvents.gameEnd(score, 0, maxCombo, xp);
-    }
-    
-    // 🔴 XP/COIN BUG FIX: Set earned values BEFORE saving progress
-    setEarnedXP(xp);
-    setEarnedCoins(coins);
-    
-    analytics.logGameOver(score, maxCombo, coins, xp);
-    
-    // 🔴 XP/COIN BUG FIX: Always save progress for Classic and Rush modes
-    // CRITICAL FIX: Speed Test never shows revive/2x rewards - just show results
-    if (gameMode === GAME_MODES.SPEED_TEST) {
-      // CRITICAL FIX BUG #1: Save progress immediately for Speed Test (no double reward modal)
-      console.log('🎮 GAME OVER - Speed Test: Saving progress immediately');
-      await saveProgress(xp, coins);
-      // Speed Test handles its own results modal
-      return;
-    }
-    
-    // 🔴 XP/COIN BUG FIX: ALWAYS save progress for Classic/Rush games, regardless of win/loss
-    // This ensures XP/coins are always persisted, even if the UI logic has issues
-    console.log(`🎮 GAME OVER - ${didSucceed ? 'Victory' : 'Defeat'}: Saving progress (XP: ${xp}, Coins: ${coins})`);
-    const saveResult = await saveProgress(xp, coins);
-    if (saveResult) {
-      console.log('✅ Progress saved successfully');
+      const modeMultiplier = gameMode === GAME_MODES.RUSH ? 1.2 : 1.0;
+      let totalCalcXP = Math.floor((baseXP + comboBonus) * modeMultiplier);
+
+      if (isVictory) {
+        xpEarned = Math.max(10, totalCalcXP); // Min 10 XP on win
+        coinsEarned = Math.floor(score / 50) + Math.floor(maxCombo / 5);
+      } else {
+        xpEarned = Math.max(1, Math.floor(totalCalcXP * 0.25)); // 25% XP on loss
+        coinsEarned = 0;
+      }
     } else {
-      console.error('❌ Failed to save progress - retrying...');
-      // Retry once
-      const retryResult = await saveProgress(xp, coins);
-      if (!retryResult) {
-        console.error('❌ Retry also failed - progress may not be saved');
-      }
+      // Zen or other modes - no XP
+      xpEarned = 0;
+      coinsEarned = 0;
     }
-    
-    // 🔴 XP/COIN BUG FIX: Show appropriate UI based on win/loss
-    // Only show 2x rewards if player actually won and earned rewards
-    if (didSucceed && (xp > 0 || coins > 0)) {
-      setShowDoubleReward(true);
-    } else {
-      // Loss: Show revive option if not already shown
-      if (!showReviveOption && !hasRevived) {
-        setShowReviveOption(true);
-      }
-    }
-    
-    // CRITICAL FIX: Record score to leaderboard for Classic and Rush modes
-    if ((gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH) && score > 0) {
-      try {
-        await leaderboardManager.addScore(gameMode, {
-          score,
-          combo: maxCombo,
-          timestamp: Date.now(),
-          playerName: 'Player',
-        });
-        console.log(`📊 Score recorded to ${gameMode} leaderboard: ${score} (Combo: ${maxCombo}x)`);
-      } catch (error) {
-        console.error('❌ Failed to record score to leaderboard:', error);
-      }
-    }
-    
-    // CRITICAL FIX: Save stats to @player_stats for StatsScreen
-    try {
-      const statsData = await AsyncStorage.getItem('@player_stats');
-      const currentStats = statsData ? JSON.parse(statsData) : {
-        highScoreClassic: 0,
-        highScoreRush: 0,
-        highScoreZen: 0,
-        fastestReaction: 0,
-        totalPlaytime: 0,
-        averageAccuracy: 0,
-        totalTaps: 0,
-        perfectGames: 0,
-      };
-      
-      // Update mode-specific high scores
-      if (gameMode === GAME_MODES.CLASSIC) {
-        currentStats.highScoreClassic = Math.max(currentStats.highScoreClassic || 0, score);
-      } else if (gameMode === GAME_MODES.RUSH) {
-        currentStats.highScoreRush = Math.max(currentStats.highScoreRush || 0, score);
-      } else if (gameMode === GAME_MODES.ZEN) {
-        currentStats.highScoreZen = Math.max(currentStats.highScoreZen || 0, score);
-      }
-      
-      // CRITICAL FIX: Update comprehensive stats
-      currentStats.gamesPlayed = (currentStats.gamesPlayed || 0) + 1;
-      currentStats.maxCombo = Math.max(currentStats.maxCombo || 0, maxCombo);
-      
-      // Calculate accuracy: hits / (hits + misses)
-      const totalHits = score / 10; // Approximate hits
-      const totalMisses = speedTestTargetsMissed || (health < GAME_CONSTANTS.MAX_HEALTH ? (GAME_CONSTANTS.MAX_HEALTH - health) : 0);
-      const totalAttempts = totalHits + totalMisses;
-      if (totalAttempts > 0) {
-        const currentAccuracy = (totalHits / totalAttempts) * 100;
-        // Update average accuracy (weighted average)
-        const oldGames = (currentStats.gamesPlayed || 1) - 1;
-        const oldAvgAccuracy = currentStats.averageAccuracy || 0;
-        currentStats.averageAccuracy = oldGames > 0 
-          ? ((oldAvgAccuracy * oldGames) + currentAccuracy) / currentStats.gamesPlayed
-          : currentAccuracy;
-      }
-      
-      // Update other stats
-      currentStats.totalTaps = (currentStats.totalTaps || 0) + totalHits;
-      currentStats.totalPlaytime = (currentStats.totalPlaytime || 0) + (getGameDuration(gameMode) - timeLeft);
-      if (health === GAME_CONSTANTS.MAX_HEALTH && gameWon) {
-        currentStats.perfectGames = (currentStats.perfectGames || 0) + 1;
-      }
-      
-      await AsyncStorage.setItem('@player_stats', JSON.stringify(currentStats));
-      console.log('✅ Stats saved to @player_stats:', { gamesPlayed: currentStats.gamesPlayed, maxCombo: currentStats.maxCombo });
-    } catch (error) {
-      console.error('❌ Failed to save stats:', error);
-    }
-    
-    // ULTIMATE: Record session for progress tracking
-    await progressTracker.recordGameSession({
-      score,
-      maxCombo,
-      accuracy: maxCombo > 0 ? (score / (maxCombo * 10)) * 100 : 0,
-      xpEarned: xp,
-      coinsEarned: coins,
-      mode: gameMode,
-      reactionTimes: [], // TODO: Track individual tap times
-      duration: getGameDuration(gameMode) - timeLeft,
-      level: getLevelFromXP(playerData?.xp ?? playerData?.totalXp ?? 0),
+
+    setEarnedXP(xpEarned);
+    setEarnedCoins(coinsEarned);
+
+    // --- 2. FINALIZE RUN (XP/Coins/Stats) ---
+    // ✅ B1: Use finalizeRun for both win and lose
+    await finalizeRun({ 
+      xpEarned, 
+      coinsEarned, 
+      gameStats: { score, maxCombo, isVictory } 
     });
+
+    // --- 3. UPDATE DETAILED STATS (AsyncStorage @player_stats) ---
+    try {
+      const statsKey = '@player_stats';
+      const statsJson = await AsyncStorage.getItem(statsKey);
+      const stats = statsJson ? JSON.parse(statsJson) : {};
+
+      // ✅ FIX #5: Increment Total Games
+      stats.gamesPlayed = (stats.gamesPlayed || 0) + 1;
+
+      // ✅ FIX #5: Increment MODE SPECIFIC Games (CRITICAL FIX)
+      if (gameMode === GAME_MODES.CLASSIC) stats.gamesPlayedClassic = (stats.gamesPlayedClassic || 0) + 1;
+      else if (gameMode === GAME_MODES.RUSH) stats.gamesPlayedRush = (stats.gamesPlayedRush || 0) + 1;
+      else if (gameMode === GAME_MODES.ZEN) stats.gamesPlayedZen = (stats.gamesPlayedZen || 0) + 1;
+      else if (gameMode === GAME_MODES.SPEED_TEST) stats.gamesPlayedSpeedTest = (stats.gamesPlayedSpeedTest || 0) + 1;
+
+      // Update High Scores
+      if (gameMode === GAME_MODES.CLASSIC) stats.highScoreClassic = Math.max(stats.highScoreClassic || 0, score);
+      if (gameMode === GAME_MODES.RUSH) stats.highScoreRush = Math.max(stats.highScoreRush || 0, score);
+      if (gameMode === GAME_MODES.ZEN) stats.highScoreZen = Math.max(stats.highScoreZen || 0, score);
+
+      // Update Totals
+      stats.totalPlaytime = (stats.totalPlaytime || 0) + (getGameDuration(gameMode) - timeLeft);
+      stats.maxCombo = Math.max(stats.maxCombo || 0, maxCombo);
+
+      await AsyncStorage.setItem(statsKey, JSON.stringify(stats));
+      console.log('📊 STATS UPDATED:', stats);
+    } catch (err) {
+      console.error('Stats Update Failed:', err);
+    }
+
+    // --- 4. UPDATE LEADERBOARD (Fixes "Speed Test Missing" bug) ---
+    try {
+        if (gameMode === GAME_MODES.SPEED_TEST && isVictory) {
+            // For Speed Test: Score is TIME (Lower is better, but we store the MS value)
+            // We store the TIME in 'score' field for sorting, or handle specific logic in Manager
+            await leaderboardManager.addScore(GAME_MODES.SPEED_TEST, {
+                score: speedTestElapsedTimeRef.current, // Store TIME in MS
+                combo: 0,
+                timestamp: Date.now(),
+                playerName: 'Player' // Or fetch real name
+            });
+            console.log('🏆 SPEED TEST SCORE SUBMITTED:', speedTestElapsedTimeRef.current);
+        } else if (score > 0 && (gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH)) {
+            await leaderboardManager.addScore(gameMode, {
+                score: score,
+                combo: maxCombo,
+                timestamp: Date.now(),
+                playerName: 'Player'
+            });
+        }
+    } catch (err) {
+        console.error('Leaderboard Submit Failed:', err);
+    }
+
+    // --- 5. SHOW RESULTS ---
+    if (gameMode === GAME_MODES.SPEED_TEST) {
+        // Speed test has its own result modal logic driven by useEffect
+    } else {
+        // Show standard double reward / game over modal
+        if (isVictory && (xpEarned > 0 || coinsEarned > 0)) {
+            setShowDoubleReward(true);
+        } else if (!showReviveOption && !hasRevived) {
+            // Only show revive if we haven't used it
+             setShowReviveOption(true);
+        }
+    }
   };
 
   // 🔴 BUG #2 FIX: Safe function to start a new game run with runId isolation
@@ -1938,135 +1922,22 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     }
   };
 
-  /**
-   * Save player progress after game over
-   * Updates XP, coins, high score, and achievements
-   * CRITICAL FIX: Uses single source of truth getPlayerProgress
-   */
-  const saveProgress = useCallback(async (xp, coins) => {
-    console.log('💾 SAVE PROGRESS - Starting save operation:');
-    console.log('  Input XP:', xp);
-    console.log('  Input Coins:', coins);
-    console.log('  Max Combo:', maxCombo);
-    
-    // Calculate combo bonus
-    const comboBonus = calculateComboBonusXP(maxCombo, xp);
-    const totalXP = xp + comboBonus;
-    
-    if (comboBonus > 0) {
-      console.log(`⚡ XP earned: ${xp} + ${comboBonus} combo bonus = ${totalXP} (Max Combo: ${maxCombo}x)`);
-    } else {
-      console.log(`⚡ XP earned: ${totalXP}`);
-    }
-    
-    // CRITICAL FIX: Use single source of truth for progress calculation
-    const { getPlayerProgress } = require('../utils/GameLogic');
-    // CRITICAL FIX: Add fallback for totalXp access
-    const currentXP = playerData?.xp ?? playerData?.totalXp ?? 0;
-    console.log('📦 CURRENT PLAYER DATA:', {
-      xp: playerData?.xp,
-      totalXp: playerData?.totalXp,
-      level: playerData?.level,
-      coins: playerData?.coins,
-    });
-    console.log('  Using currentXP:', currentXP);
-    
-    const oldProgress = getPlayerProgress(currentXP);
-    const newXP = currentXP + totalXP;
-    const newProgress = getPlayerProgress(newXP);
-    
-    // CRITICAL FIX BUG #2: Calculate new totals and level
-    const newTotalXP = newProgress.totalXp;
-    const newLevel = newProgress.level;
-    const newCurrentXP = newProgress.currentXp;
-    const newXPToNextLevel = newProgress.xpToNextLevel;
-    const newCoins = (playerData?.coins || 0) + coins;
-    
-    console.log('🎮 Game End - Updating player data:');
-    console.log('  Earned XP:', totalXP);
-    console.log('  Earned Coins:', coins);
-    console.log('  Old Total XP:', currentXP);
-    console.log('  New Total XP:', newTotalXP);
-    console.log('  Old Level:', oldProgress.level);
-    console.log('  New Level:', newLevel);
-    console.log('  Old Coins:', playerData?.coins || 0);
-    console.log('  New Coins:', newCoins);
-    
-    // 🔴 XP/COIN BUG FIX: Use updatePlayerData directly instead of addXP/addCoins
-    // This prevents race conditions and ensures atomic updates
-    // CRITICAL FIX BUG #2: Force immediate save with all progression fields
-    try {
-      const updateData = {
-        xp: newTotalXP,
-        level: newLevel,
-        currentXp: newCurrentXP,
-        xpToNextLevel: newXPToNextLevel,
-        totalXp: newTotalXP,
-        coins: newCoins,
-        highScore: Math.max(playerData?.highScore || 0, score),
-        maxCombo: Math.max(playerData?.maxCombo || 0, maxCombo),
-        gamesPlayed: (playerData?.gamesPlayed || 0) + 1,
-      };
-      
-      console.log('💾 SAVING UPDATED DATA:', updateData);
-      const saveSuccess = await updatePlayerData(updateData);
-      
-      if (saveSuccess) {
-        console.log('✅ Player data saved successfully to storage');
-        
-        // CRITICAL: Verify save worked by reloading data
-        try {
-          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-          const STORAGE_KEY = '@reflexion_player_data';
-          const verification = await AsyncStorage.getItem(STORAGE_KEY);
-          if (verification) {
-            const verified = JSON.parse(verification);
-            console.log('🔍 VERIFICATION - Loaded data from storage:');
-            console.log('  Total XP:', verified.totalXp);
-            console.log('  Level:', verified.level);
-            console.log('  Coins:', verified.coins);
-            console.log('  Current XP:', verified.currentXp);
-            
-            if (verified.totalXp !== newTotalXP) {
-              console.error('❌ SAVE VERIFICATION FAILED!');
-              console.error('  Expected Total XP:', newTotalXP);
-              console.error('  Got Total XP:', verified.totalXp);
-            } else {
-              console.log('✅ SAVE VERIFIED - Data matches expected values');
-            }
-          } else {
-            console.warn('⚠️ Verification: No data found in storage');
-          }
-        } catch (verifyError) {
-          console.warn('⚠️ Could not verify save:', verifyError);
-        }
-      } else {
-        console.error('❌ Failed to save player data - updatePlayerData returned false');
-        return false;
-      }
-    } catch (error) {
-      console.error('❌ Failed to save player data:', error);
-      console.error('  Error details:', error.message, error.stack);
-      return false;
-    }
-    
-    // Check for level up AFTER calculating with correct values
-    if (newProgress.level > oldProgress.level) {
-      await soundManager.play('levelUp');
-      console.log(`🎉 Level up! ${oldProgress.level} → ${newProgress.level} (XP: ${oldProgress.totalXp} → ${newProgress.totalXp})`);
-      debugEvents.levelUp(newProgress.level, newProgress.totalXp);
-      analytics.logLevelUp(newProgress.level, newProgress.totalXp);
-    }
-    
-    console.log(`✅ Progress saved: +${totalXP} XP (Total: ${newTotalXP}), +${coins} coins (Total: ${newCoins}), Level: ${oldProgress.level} → ${newLevel}`);
-    return true;
-  }, [playerData, score, maxCombo, updatePlayerData]);
+  // ✅ B1: saveProgress REMOVED - Use finalizeRun instead
+  // XP and level updates should ONLY go through addXP/addCoins (GlobalStateContext)
+  // NEVER write directly to AsyncStorage for player data
 
   /**
    * Handle double reward ad watch
    * Doubles XP and coins earned
    */
   const handleDoubleReward = async () => {
+    // ✅ FIX: Sadece Classic/Rush için double reward göster
+    if (gameMode !== GAME_MODES.CLASSIC && gameMode !== GAME_MODES.RUSH) {
+      console.warn('[XP] Double reward blocked: not Classic/Rush mode');
+      setShowDoubleReward(false);
+      return;
+    }
+
     const result = await adService.showRewardedAd('double_reward');
     if (result.success) {
       const finalXP = earnedXP * 2;
@@ -2074,9 +1945,16 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       setEarnedXP(finalXP);
       setEarnedCoins(finalCoins);
       setShowDoubleReward(false);
-      // CRITICAL FIX BUG #1: Ensure progress is saved after doubling
-      await saveProgress(finalXP, finalCoins);
-      analytics.logRewardClaim('double_reward', finalCoins);
+      // ✅ B1: Use finalizeRun instead of saveProgress
+      if (gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH) {
+        hasFinalizedRef.current = false; // Reset to allow double reward
+        await finalizeRun({ 
+          xpEarned: finalXP, 
+          coinsEarned: finalCoins, 
+          gameStats: { score, maxCombo, isVictory: true } 
+        });
+        analytics.logRewardClaim('double_reward', finalCoins);
+      }
     }
   };
 
@@ -2087,9 +1965,16 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
    */
   const handleSkipAd = useCallback(() => {
     setShowDoubleReward(false);
-    // Save progress immediately when skipping
-    saveProgress(earnedXP, earnedCoins);
-  }, [earnedXP, earnedCoins, saveProgress]);
+    // ✅ B1: Use finalizeRun instead of saveProgress
+    if (gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH) {
+      hasFinalizedRef.current = false; // Reset to allow skip save
+      finalizeRun({ 
+        xpEarned: earnedXP, 
+        coinsEarned: earnedCoins, 
+        gameStats: { score, maxCombo, isVictory: true } 
+      });
+    }
+  }, [earnedXP, earnedCoins, finalizeRun, gameMode, score, maxCombo]);
 
   const handlePlayAgain = () => {
     // 🔴 RUSH MODE FIX: Reset game over ref
@@ -2157,10 +2042,12 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
    * REFLEXION FIX: Clear ALL timers, stop audio, reset ALL state
    */
   const handleMainMenu = useCallback(() => {
-    // Stop all audio immediately
+    // ✅ FIX #3: Stop all game music and sounds, then play menu music
     try {
       const { soundManager } = require('../services/SoundManager');
       soundManager.stopAll();
+      musicManager.stopAll(); // Stop game music
+      musicManager.playMenuMusic(); // Start menu music
     } catch (e) {
       // Fail silently if soundManager not available
     }
@@ -2630,24 +2517,27 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     }
 
     // ====================================================
-    // 8. HAPTIC FEEDBACK
-    // === HAPTIC PATCH START ===
-    // Medium intensity for normal hits, heavy for danger, light for miss
+    // 8. HAPTIC FEEDBACK - AAA GAME JUICE
+    // === AAA GAME JUICE: Enhanced haptics with specific patterns ===
     // ====================================================
     if (hitType === 'danger') {
-      triggerHaptic('heavy'); // Heavy haptic for danger hits
+      // AAA: Danger hit = Heavy haptic + Screen shake
+      triggerShake(); // VISUAL IMPACT
+      triggerHaptic('heavy'); // Heavy thud for damage
     } else if (hitType === 'powerup' || hitType === 'lucky') {
       triggerHaptic('success'); // Success notification for special hits
     } else if (newCombo > 0) {
-      triggerHaptic('medium'); // Medium intensity for normal successful hits
+      triggerHaptic('light'); // AAA: Light impact for crisp tap feel
+    } else {
+      // Normal hit without combo
+      triggerHaptic('light'); // AAA: Light impact for crisp tap feel
     }
-    // === HAPTIC PATCH END ===
 
     // ====================================================
     // 9. CAMERA SHAKE FOR COMBO MILESTONES
     // ====================================================
     if (newCombo > 0 && newCombo % 5 === 0 && hitType !== 'danger') {
-      triggerCameraShake();
+      triggerCameraShake(); // Keep old shake for combo milestones
       if (hitType !== 'powerup' && hitType !== 'lucky') {
         // Already played combo sound above for normal hits
         triggerHaptic('success');
@@ -2672,7 +2562,7 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     }
 
     console.log(`[DEBUG HIT] handleSuccessfulHit completed: targetId=${target.id}, hitType=${hitType}, all feedback triggered`);
-  }, [combo, maxCombo, powerBar, powerBarActive, currentTheme, activeParticleEmoji, gameMode, speedTestTargetCount, triggerHaptic, triggerCameraShake, isMountedRef]);
+  }, [combo, maxCombo, powerBar, powerBarActive, currentTheme, activeParticleEmoji, gameMode, speedTestTargetCount, triggerHaptic, triggerCameraShake, triggerShake, isMountedRef]);
 
   const handleTap = useCallback(async (target) => {
     console.log(
@@ -2910,6 +2800,10 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   ]);
 
   const handleMiss = () => {
+    // === AAA GAME JUICE: Screen shake + haptics for miss ===
+    triggerShake(); // VISUAL IMPACT
+    triggerHaptic('error'); // Error haptic for miss feedback
+    
     // Don't reset combo in Zen mode
     if (gameMode !== GAME_MODES.ZEN) {
       setCombo(0);
@@ -3041,17 +2935,13 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   }
 
   return (
-    <Animated.View
+    <AnimatedReanimated.View
       style={[
         styles.container,
         {
           backgroundColor: safeBackgroundColor, // 🎨 PREMIUM ESPORTS: Premium dark background
-          transform: [
-            {
-              translateX: shakeAnim,
-            },
-          ],
         },
+        animatedShakeStyle, // === AAA GAME JUICE: Reanimated screen shake ===
       ]}
     >
       <SafeAreaView style={[styles.safeArea, { backgroundColor: safeBackgroundColor }]}>
@@ -3105,8 +2995,9 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
           )}
         </View>
 
-      {/* Health Bar - Hidden in Speed Test mode */}
-      {gameMode !== GAME_MODES.SPEED_TEST && (
+      {/* Health Bar - Hidden in Speed Test and Zen modes */}
+      {/* === AAA ZEN MODE FIX: Hide lives indicator in Zen mode === */}
+      {gameMode !== GAME_MODES.SPEED_TEST && gameMode !== GAME_MODES.ZEN && (
         <View style={styles.healthBar}>
           {Array.from({ length: GAME_CONSTANTS.MAX_HEALTH }).map((_, i) => (
             <View
@@ -3397,7 +3288,7 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
           </View>
         </Modal>
       </SafeAreaView>
-    </Animated.View>
+    </AnimatedReanimated.View>
   );
 }
 

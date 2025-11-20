@@ -8,6 +8,7 @@ import {
   Modal,
   Pressable,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -26,6 +27,8 @@ import {
   GAME_MODES, 
   getLevelFromXP, 
   getXPProgress, 
+  getPlayerProgress,
+  getLevelTierInfo,
   isModeUnlocked, 
   getModeUnlockLevel,
   isSpeedTestTargetCountUnlocked,
@@ -53,16 +56,19 @@ const MenuScreen = React.memo(({ navigation }) => {
     updatePlayerData,
     isInitialized,
     loadPlayerData,
+    refreshPlayerData, // FIX: Use refreshPlayerData for clarity
   } = useGlobalState();
 
-  // ✅ SAFE: Check initialization before rendering
-  useEffect(() => {
-    if (!isInitialized) {
-      console.warn('⚠️ MenuScreen loaded before GlobalState initialized');
-    }
-  }, [isInitialized]);
+  // ✅ B3: Don't render until GlobalState is initialized
+  if (!isInitialized) {
+    return (
+      <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <Text style={{ color: '#4ECDC4' }}>Loading...</Text>
+      </SafeAreaView>
+    );
+  }
 
-  // CRITICAL FIX PRIORITY 2: Reload player data when screen focuses (with infinite loop prevention)
+  // ✅ FIX #1: Reload player data when screen focuses (with infinite loop prevention)
   const loadingRef = React.useRef(false);
   
   useFocusEffect(
@@ -75,16 +81,23 @@ const MenuScreen = React.memo(({ navigation }) => {
           return;
         }
         
-        if (!isInitialized || !loadPlayerData) {
+        if (!isInitialized) {
+          return;
+        }
+        
+        // FIX: Use refreshPlayerData if available, fallback to loadPlayerData
+        const refreshFn = refreshPlayerData || loadPlayerData;
+        if (!refreshFn) {
           return;
         }
         
         loadingRef.current = true;
         
         try {
-          await loadPlayerData();
-          // CRITICAL FIX: Removed console.log to prevent spam
-          // Data will update via context automatically
+          // ✅ FIX #5: Stop game music when returning to menu
+          musicManager.stopAll();
+          await refreshFn();
+          console.log('✅ MenuScreen: Player data refreshed');
         } catch (error) {
           console.warn('⚠️ Failed to reload player data:', error);
         } finally {
@@ -98,7 +111,7 @@ const MenuScreen = React.memo(({ navigation }) => {
       return () => {
         isActive = false;
       };
-    }, [isInitialized, loadPlayerData]) // CRITICAL FIX: Removed playerData from dependencies
+    }, [isInitialized, refreshPlayerData, loadPlayerData]) // ✅ FIX: Include refreshPlayerData in deps
   );
 
   const [screenDimensions, setScreenDimensions] = useState({ width: 0, height: 0 });
@@ -288,18 +301,20 @@ const MenuScreen = React.memo(({ navigation }) => {
     }
   }, [playerData, addXP, addCoins]);
 
-  // CRITICAL FIX: Use single source of truth for player progress
+  // ✅ AAA XP System: Use single source of truth for player progress
   const playerProgress = useMemo(() => {
-    if (!playerData || playerData.xp === undefined) {
+    if (!playerData || (playerData.totalXp === undefined && playerData.xp === undefined)) {
       return { level: 1, currentXp: 0, xpToNextLevel: 100, totalXp: 0 };
     }
-    const { getPlayerProgress } = require('../utils/GameLogic');
-    return getPlayerProgress(playerData.xp || 0);
+    // ✅ Use totalXp (source of truth), fallback to xp for backward compat
+    const totalXp = playerData.totalXp ?? playerData.xp ?? 0;
+    return getPlayerProgress(totalXp);
   }, [playerData]);
   
   const level = playerProgress.level;
+  const tierInfo = useMemo(() => getLevelTierInfo(level), [level]);
   
-  // CRITICAL FIX: Calculate progress bar from currentXp / xpToNextLevel (not hardcoded)
+  // ✅ AAA XP System: Calculate progress bar from currentXp / xpToNextLevel
   const xpProgress = useMemo(() => {
     if (playerProgress.xpToNextLevel === 0) return 100;
     const progress = (playerProgress.currentXp / playerProgress.xpToNextLevel) * 100;
@@ -360,9 +375,15 @@ const MenuScreen = React.memo(({ navigation }) => {
     }, 200);
   }, [navigation, scaleAnim, level]);
 
-  const handleModeSelect = useCallback((mode) => {
+  // === AAA SPEED TEST FIX: Handle mode selection with optional targetCount ===
+  const handleModeSelect = useCallback((mode, targetCount = null) => {
     setSelectedMode(mode);
-    navigation.navigate('Game', { mode });
+    // Speed Test: Pass targetCount as route param
+    if (mode === GAME_MODES.SPEED_TEST && targetCount) {
+      navigation.navigate('Game', { mode, targetCount });
+    } else {
+      navigation.navigate('Game', { mode });
+    }
   }, [navigation]);
 
   const openSettings = useCallback(() => {
@@ -373,35 +394,88 @@ const MenuScreen = React.memo(({ navigation }) => {
     setShowSettings(false);
   }, []);
 
+  // ✅ B3: Don't render until GlobalState is initialized
+  if (!isInitialized) {
+    return (
+      <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#4ECDC4" />
+        <Text style={{ color: '#4ECDC4', marginTop: 16 }}>Loading...</Text>
+      </SafeAreaView>
+    );
+  }
+
   if (screenDimensions.width === 0) {
     return <View style={styles.container} />;
   }
 
   return (
     <SafeAreaView style={styles.container}>
-      <TouchableOpacity
-        style={styles.settingsButton}
-        onPress={openSettings}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.settingsIcon}>⚙️</Text>
-      </TouchableOpacity>
+      <View style={styles.contentContainer}>
+        {/* ✅ FIX #1: Header Section (Top 25%) */}
+        <View style={styles.headerSection}>
+          <TouchableOpacity
+            style={styles.settingsButton}
+            onPress={openSettings}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.settingsIcon}>⚙️</Text>
+          </TouchableOpacity>
 
-      <Animated.View 
-        style={[
-          styles.titleContainer,
-          {
-            transform: [
-              { scale: Animated.multiply(pulseAnim, scaleAnim) },
-            ],
-          },
-        ]}
-      >
-        <Text style={[styles.title, { fontFamily: TYPOGRAPHY?.black || 'System' }]}>Reflexion</Text>
-        <View style={styles.titleGlow} />
-      </Animated.View>
+          <Animated.View 
+            style={[
+              styles.titleContainer,
+              {
+                transform: [
+                  { scale: Animated.multiply(pulseAnim, scaleAnim) },
+                ],
+              },
+            ]}
+          >
+            <Text style={[styles.title, { fontFamily: TYPOGRAPHY?.black || 'System' }]}>Reflexion</Text>
+            <View style={styles.titleGlow} />
+          </Animated.View>
 
-      <View style={styles.menuContainer}>
+          {/* ✅ FIX #1: Player Profile Card - At TOP below logo */}
+          <View style={styles.playerCard}>
+        <View style={styles.levelBadge}>
+          <Text style={styles.levelBadgeIcon}>{tierInfo.icon}</Text>
+          <Text style={styles.levelBadgeText}>{level}</Text>
+        </View>
+        
+        <View style={styles.progressInfo}>
+          <Text style={[styles.tierName, { color: tierInfo.color }]}>
+            {tierInfo.name}
+          </Text>
+          <Text style={styles.xpText}>
+            {playerProgress.currentXp} / {playerProgress.xpToNextLevel} XP
+          </Text>
+          
+          {/* XP Progress Bar */}
+          <View style={styles.xpBarContainer}>
+            <View 
+              style={[
+                styles.xpBarFill,
+                { 
+                  width: `${xpProgress}%`,
+                  backgroundColor: tierInfo.color,
+                }
+              ]}
+            />
+          </View>
+        </View>
+        
+        <View style={styles.coinsBadge}>
+          <Text style={styles.coinsIcon}>🪙</Text>
+          <Text style={[styles.coinsValue, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>
+            {playerData.coins || 0}
+          </Text>
+          </View>
+        </View>
+      </View>
+
+      {/* ✅ FIX #1: Body Section (Bottom 75%) */}
+      <View style={styles.bodySection}>
+        <View style={styles.menuContainer}>
         {/* VISUAL UPGRADE: Play button - dominant CTA with breathing glow and micro-bounce */}
         <Animated.View
           style={{
@@ -458,7 +532,8 @@ const MenuScreen = React.memo(({ navigation }) => {
         </Pressable>
       </View>
 
-      <View style={styles.secondaryButtonsContainer}>
+      {/* ✅ A: Secondary buttons in grid layout */}
+      <View style={styles.secondaryButtonsGrid}>
         <Pressable
           style={({ pressed }) => [
             styles.secondaryButton,
@@ -491,10 +566,7 @@ const MenuScreen = React.memo(({ navigation }) => {
           <Text style={styles.secondaryButtonIcon}>🏆</Text>
           <Text style={[styles.secondaryButtonText, { fontFamily: TYPOGRAPHY?.regular || 'System' }]}>Leaderboard</Text>
         </Pressable>
-      </View>
 
-      {/* Additional Row */}
-      <View style={styles.secondaryButtonsContainer}>
         <Pressable
           style={({ pressed }) => [
             styles.secondaryButton,
@@ -517,64 +589,6 @@ const MenuScreen = React.memo(({ navigation }) => {
           <Text style={[styles.secondaryButtonText, { fontFamily: TYPOGRAPHY?.regular || 'System' }]}>How to Play</Text>
         </Pressable>
       </View>
-
-      {/* CRITICAL FIX: Daily Challenge & Battle Mode HIDDEN until future update */}
-      {/* Keeping code intact but UI invisible as requested by client */}
-      {false && (
-        <View style={styles.viralFeaturesContainer}>
-          <Pressable
-            style={({ pressed }) => [
-              styles.viralButton,
-              styles.dailyChallengeButton,
-              pressed && styles.viralButtonPressed,
-            ]}
-            onPress={() => handleButtonPress('daily')}
-          >
-            <Text style={styles.viralButtonIcon}>🌟</Text>
-            <Text style={[styles.viralButtonText, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>Daily Challenge</Text>
-            {!dailyChallengeCompleted && (
-              <View style={styles.newBadge}>
-                <Text style={styles.newBadgeText}>NEW</Text>
-              </View>
-            )}
-          </Pressable>
-
-          <Pressable
-            style={({ pressed }) => [
-              styles.viralButton,
-              styles.battleButton,
-              pressed && styles.viralButtonPressed,
-            ]}
-            onPress={() => handleButtonPress('battle')}
-          >
-            <Text style={styles.viralButtonIcon}>⚔️</Text>
-            <Text style={[styles.viralButtonText, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>Battle Mode</Text>
-          </Pressable>
-        </View>
-      )}
-
-      <View style={styles.statsBar}>
-        <View style={styles.statItem}>
-          <Text style={styles.statIcon}>🪙</Text>
-          <Text style={[styles.statValue, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>{playerData.coins || 0}</Text>
-        </View>
-        
-        <View style={styles.statItem}>
-          <Text style={styles.statIcon}>⭐</Text>
-          <Text style={[styles.statValue, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>Level {level}</Text>
-        </View>
-        
-        <View style={styles.xpContainer}>
-          <View style={styles.xpBar}>
-            <View 
-              style={[
-                styles.xpFill,
-                { width: `${xpProgress}%` },
-              ]}
-            />
-          </View>
-          <Text style={styles.xpText}>{xpProgress}%</Text>
-        </View>
       </View>
 
       <Modal visible={showDailyReward} transparent animationType="fade">
@@ -684,6 +698,7 @@ const MenuScreen = React.memo(({ navigation }) => {
           </View>
         </View>
       </Modal>
+      </View>
     </SafeAreaView>
   );
 });
@@ -696,9 +711,29 @@ const styles = createSafeStyleSheet({
   container: {
     flex: 1,
     backgroundColor: '#0a0a1a',
+  },
+  // ✅ FIX #1: Remove ScrollView - use View with flex layout
+  // ✅ FIX #1: Single screen layout - no scroll
+  contentContainer: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: SPACING.SCREEN_PADDING,
+    paddingTop: SPACING.SAFE_AREA_TOP,
+    paddingBottom: SPACING.SAFE_AREA_BOTTOM,
+  },
+  // ✅ FIX #1: Header section (Top 25%)
+  headerSection: {
+    flex: 0.25,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  // ✅ FIX #1: Body section (Bottom 75%)
+  bodySection: {
+    flex: 0.75,
+    width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: SPACING.SCREEN_PADDING,
   },
   settingsButton: {
     position: 'absolute',
@@ -723,12 +758,12 @@ const styles = createSafeStyleSheet({
   },
   titleContainer: {
     alignItems: 'center',
-    marginBottom: SPACING.XXL,
-    marginTop: SPACING.SAFE_AREA_TOP + SPACING.XL,
+    marginBottom: SPACING.MD, // ✅ FIX #1: Reduced margin for compact layout
+    marginTop: SPACING.SM,
   },
   title: {
     color: '#4ECDC4',
-    fontSize: 56,
+    fontSize: 48, // ✅ A: Reduced from 56 for compact layout
     fontWeight: 'bold',
     textAlign: 'center',
     textShadowColor: '#4ECDC4',
@@ -748,8 +783,8 @@ const styles = createSafeStyleSheet({
   menuContainer: {
     width: '100%',
     maxWidth: 400,
-    gap: SPACING.XL, // VISUAL UPGRADE: Increased spacing between UI blocks
-    marginBottom: SPACING.XL, // VISUAL UPGRADE: Increased bottom margin
+    gap: SPACING.MD, // ✅ FIX #1: Reduced gap for compact layout
+    marginBottom: SPACING.SM, // ✅ FIX #1: Reduced margin
   },
   gameModeButton: {
     borderRadius: BORDER_RADIUS.LG, // VISUAL UPGRADE: Normalized border radius
@@ -763,15 +798,15 @@ const styles = createSafeStyleSheet({
     elevation: 10,
   },
   playButton: {
-    // VISUAL UPGRADE: Dominant CTA - larger size
-    height: SPACING.BUTTON_HEIGHT + SPACING.LG,
+    // ✅ A: Compact size for single screen
+    height: 60, // Reduced from SPACING.BUTTON_HEIGHT + SPACING.LG
     backgroundColor: 'rgba(78, 205, 196, 0.25)',
     borderColor: '#4ECDC4',
     shadowColor: '#4ECDC4',
   },
   secondaryModeButton: {
-    // VISUAL UPGRADE: Demoted secondary modes - smaller size
-    height: SPACING.BUTTON_HEIGHT_COMPACT + SPACING.SM,
+    // ✅ A: Compact size for single screen
+    height: 52, // Reduced from SPACING.BUTTON_HEIGHT_COMPACT + SPACING.SM
     backgroundColor: 'rgba(77, 208, 225, 0.15)',
     borderWidth: 1.5,
   },
@@ -818,23 +853,26 @@ const styles = createSafeStyleSheet({
     fontSize: 24, // Smaller than Play button icon
     marginBottom: 4,
   },
-  secondaryButtonsContainer: {
+  // ✅ A: Grid layout for secondary buttons
+  secondaryButtonsGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     width: '100%',
     maxWidth: 400,
-    marginBottom: SPACING.XL,
-    gap: SPACING.SM,
+    marginBottom: SPACING.XS,
+    gap: SPACING.XS,
   },
   secondaryButton: {
-    flex: 1,
-    height: SPACING.BUTTON_HEIGHT_COMPACT + SPACING.SM,
+    flexBasis: '48%', // ✅ A: 2 columns grid
+    height: 48, // ✅ A: Compact height
     borderRadius: BORDER_RADIUS.MD,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(78, 205, 196, 0.15)',
     borderWidth: 1.5,
     borderColor: 'rgba(78, 205, 196, 0.4)',
+    marginBottom: 8, // ✅ A: Vertical spacing
   },
   secondaryButtonPressed: {
     transform: [{ scale: 0.95 }],
@@ -849,59 +887,81 @@ const styles = createSafeStyleSheet({
     fontSize: 11,
     fontWeight: '600',
   },
-  statsBar: {
-    position: 'absolute',
-    bottom: SPACING.SAFE_AREA_BOTTOM + SPACING.XL,
-    left: SPACING.SCREEN_PADDING,
-    right: SPACING.SCREEN_PADDING,
+  // ✅ FIX #2: AAA XP System: Player Card Styles - Relative positioning, no overlap
+  // ✅ FIX #2: Player Card Styles - Compact for single screen
+  playerCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(44, 62, 80, 0.8)',
-    borderRadius: BORDER_RADIUS.MD,
-    padding: SPACING.MD,
+    backgroundColor: 'rgba(26, 26, 46, 0.6)',
+    borderRadius: BORDER_RADIUS.LG,
+    padding: SPACING.SM, // ✅ FIX #1: Reduced padding
+    marginTop: SPACING.XS,
+    marginBottom: SPACING.SM, // ✅ FIX #1: Reduced margin
+    marginHorizontal: SPACING.SCREEN_PADDING,
+    width: '100%',
+    maxWidth: 400,
     shadowColor: '#4ECDC4',
     shadowOpacity: 0.3,
     shadowRadius: 20,
     elevation: 10,
   },
-  statItem: {
-    flexDirection: 'row',
+  levelBadge: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: 'rgba(78, 205, 196, 0.2)',
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
+    marginRight: SPACING.MD,
   },
-  statIcon: {
+  levelBadgeIcon: {
+    fontSize: 28,
+  },
+  levelBadgeText: {
     fontSize: 20,
-  },
-  statValue: {
-    color: '#ECF0F1',
-    fontSize: 16,
     fontWeight: 'bold',
+    color: '#FFF',
   },
-  xpContainer: {
+  progressInfo: {
     flex: 1,
-    marginLeft: SPACING.MD,
-    alignItems: 'flex-end',
   },
-  xpBar: {
-    width: 100,
-    height: 8,
-    backgroundColor: '#2C3E50',
-    borderRadius: 4,
-    overflow: 'hidden',
+  tierName: {
+    fontSize: 18,
+    fontWeight: 'bold',
     marginBottom: 4,
   },
-  xpFill: {
-    height: '100%',
-    backgroundColor: '#4ECDC4',
-    shadowColor: '#4ECDC4',
-    shadowOpacity: 0.8,
-    shadowRadius: 10,
-    elevation: 5,
-  },
   xpText: {
+    fontSize: 14,
     color: '#BDC3C7',
-    fontSize: 12,
+    marginBottom: 8,
+  },
+  xpBarContainer: {
+    height: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  xpBarFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  coinsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 215, 0, 0.1)',
+    paddingVertical: SPACING.SM,
+    paddingHorizontal: SPACING.MD,
+    borderRadius: BORDER_RADIUS.MD,
+    marginLeft: SPACING.SM,
+  },
+  coinsIcon: {
+    fontSize: 20,
+    marginRight: 6,
+  },
+  coinsValue: {
+    color: '#FFD700',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   modalOverlay: {
     flex: 1,

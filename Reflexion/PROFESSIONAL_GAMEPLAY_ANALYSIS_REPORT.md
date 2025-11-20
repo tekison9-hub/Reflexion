@@ -818,3 +818,5 @@ const coins = Math.floor(score / 50) + Math.floor(maxCombo / 8);
 
 
 
+
+

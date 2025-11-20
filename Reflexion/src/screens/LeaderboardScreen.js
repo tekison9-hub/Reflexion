@@ -4,13 +4,14 @@
  * Resets weekly, fully local (no backend required)
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +27,35 @@ export default function LeaderboardScreen({ navigation }) {
   const [activeMode, setActiveMode] = useState(GAME_MODES.CLASSIC);
   const [leaderboard, setLeaderboard] = useState([]);
   const [timeUntilReset, setTimeUntilReset] = useState('');
+  // ✅ FIX: Speed Test için target count seçimi
+  const [selectedTargetCount, setSelectedTargetCount] = useState(50);
+
+  const loadLeaderboard = useCallback(async () => {
+    try {
+      let data;
+      if (activeMode === GAME_MODES.SPEED_TEST) {
+        data = await leaderboardManager.getLeaderboard(activeMode, selectedTargetCount);
+      } else {
+        data = await leaderboardManager.getLeaderboard(activeMode);
+      }
+      setLeaderboard(data);
+    } catch (error) {
+      console.error('❌ Failed to load leaderboard:', error);
+    }
+  }, [activeMode, selectedTargetCount]);
+
+  const updateResetTimer = useCallback(() => {
+    const formatted = leaderboardManager.getTimeUntilResetFormatted();
+    setTimeUntilReset(formatted);
+  }, []);
+
+  // FIX: Load leaderboard when screen focuses (for fresh data after game)
+  useFocusEffect(
+    useCallback(() => {
+      loadLeaderboard();
+      updateResetTimer();
+    }, [loadLeaderboard, updateResetTimer])
+  );
 
   useEffect(() => {
     loadLeaderboard();
@@ -33,17 +63,7 @@ export default function LeaderboardScreen({ navigation }) {
 
     const interval = setInterval(updateResetTimer, 60000);
     return () => clearInterval(interval);
-  }, [activeMode]);
-
-  const loadLeaderboard = async () => {
-    const data = await leaderboardManager.getLeaderboard(activeMode);
-    setLeaderboard(data);
-  };
-
-  const updateResetTimer = () => {
-    const formatted = leaderboardManager.getTimeUntilResetFormatted();
-    setTimeUntilReset(formatted);
-  };
+  }, [loadLeaderboard, updateResetTimer]);
 
   const handleModeSwitch = (mode) => {
     soundManager.play('tap');
@@ -101,6 +121,7 @@ export default function LeaderboardScreen({ navigation }) {
         </View>
 
         {/* Mode Tabs */}
+        {/* === AAA LEADERBOARD: Added Speed Test tab === */}
         <View style={styles.tabsContainer}>
           <TouchableOpacity
             style={[styles.tab, activeMode === GAME_MODES.CLASSIC && styles.tabActive]}
@@ -112,6 +133,8 @@ export default function LeaderboardScreen({ navigation }) {
                 activeMode === GAME_MODES.CLASSIC && styles.tabTextActive,
                 { fontFamily: TYPOGRAPHY?.bold || 'System' },
               ]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
             >
               ⚡ Classic
             </Text>
@@ -126,11 +149,50 @@ export default function LeaderboardScreen({ navigation }) {
                 activeMode === GAME_MODES.RUSH && styles.tabTextActive,
                 { fontFamily: TYPOGRAPHY?.bold || 'System' },
               ]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
             >
               💥 Rush
             </Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeMode === GAME_MODES.SPEED_TEST && styles.tabActive]}
+            onPress={() => handleModeSwitch(GAME_MODES.SPEED_TEST)}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                activeMode === GAME_MODES.SPEED_TEST && styles.tabTextActive,
+                { fontFamily: TYPOGRAPHY?.bold || 'System' },
+              ]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+            >
+              ⏱️ Speed Test
+            </Text>
+          </TouchableOpacity>
         </View>
+
+        {/* ✅ FIX: Speed Test için target count seçici */}
+        {activeMode === GAME_MODES.SPEED_TEST && (
+          <View style={styles.targetCountSelector}>
+            {[20, 30, 40, 50].map(count => (
+              <TouchableOpacity
+                key={count}
+                style={[
+                  styles.targetCountButton,
+                  selectedTargetCount === count && styles.targetCountButtonActive
+                ]}
+                onPress={() => {
+                  setSelectedTargetCount(count);
+                  loadLeaderboard();
+                }}
+              >
+                <Text style={styles.targetCountText}>{count}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         {/* Leaderboard List */}
         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
@@ -139,68 +201,81 @@ export default function LeaderboardScreen({ navigation }) {
               <Text style={styles.emptyIcon}>📊</Text>
               <Text style={styles.emptyText}>No scores yet this week!</Text>
               <Text style={styles.emptySubtext}>
-                Play {activeMode === GAME_MODES.CLASSIC ? 'Classic' : 'Rush'} mode to set a record
+                Play {activeMode === GAME_MODES.CLASSIC ? 'Classic' : activeMode === GAME_MODES.RUSH ? 'Rush' : 'Speed Test'} mode to set a record
               </Text>
             </View>
           ) : (
-            leaderboard.map((entry, index) => (
-              <LinearGradient
-                key={`${entry.timestamp}-${index}`}
-                colors={
-                  index < 3
-                    ? ['rgba(255, 215, 0, 0.15)', 'rgba(255, 215, 0, 0.05)']
-                    : ['rgba(78, 205, 196, 0.1)', 'rgba(78, 205, 196, 0.05)']
-                }
-                style={styles.entryCard}
-              >
-                <View
-                  style={[
-                    styles.rankBadge,
-                    { backgroundColor: getRankColor(index + 1) + '20' },
-                  ]}
+            leaderboard.map((entry, index) => {
+              // === AAA LEADERBOARD: Speed Test ranks by TIME (lowest is best) ===
+              const isSpeedTest = activeMode === GAME_MODES.SPEED_TEST;
+              const displayValue = isSpeedTest 
+                ? (entry.time ? `${entry.time.toFixed(3)}s` : entry.score) // ✅ FIX #3: Show precise time (3 decimals)
+                : entry.score; // Show score for Classic/Rush
+              const displayLabel = isSpeedTest ? 'Time' : 'Score';
+              
+              return (
+                <LinearGradient
+                  key={`${entry.timestamp}-${index}`}
+                  colors={
+                    index < 3
+                      ? ['rgba(255, 215, 0, 0.15)', 'rgba(255, 215, 0, 0.05)']
+                      : ['rgba(78, 205, 196, 0.1)', 'rgba(78, 205, 196, 0.05)']
+                  }
+                  style={styles.entryCard}
                 >
-                  <Text style={[styles.rankText, { color: getRankColor(index + 1) }]}>
-                    {getRankMedal(index + 1)}
-                  </Text>
-                </View>
-
-                <View style={styles.entryInfo}>
-                  <Text style={[styles.entryName, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>
-                    {entry.playerName || 'Player'}
-                  </Text>
-                  <Text style={styles.entryDate}>{formatDate(entry.timestamp)}</Text>
-                </View>
-
-                <View style={styles.entryStats}>
-                  <View style={styles.statItem}>
-                    <Text
-                      style={[
-                        styles.statValue,
-                        { fontFamily: TYPOGRAPHY?.bold || 'System' },
-                      ]}
-                    >
-                      {entry.score}
+                  <View
+                    style={[
+                      styles.rankBadge,
+                      { backgroundColor: getRankColor(index + 1) + '20' },
+                    ]}
+                  >
+                    <Text style={[styles.rankText, { color: getRankColor(index + 1) }]}>
+                      {getRankMedal(index + 1)}
                     </Text>
-                    <Text style={styles.statLabel}>Score</Text>
                   </View>
-                  <View style={styles.statDivider} />
-                  <View style={styles.statItem}>
-                    <Text
-                      style={[
-                        styles.statValue,
-                        {
-                          color: '#FF6B9D',
-                          fontFamily: TYPOGRAPHY?.bold || 'System',
-                        },
-                      ]}
-                    >
-                      {entry.combo}x
+
+                  <View style={styles.entryInfo}>
+                    <Text style={[styles.entryName, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>
+                      {entry.playerName || 'Player'}
                     </Text>
-                    <Text style={styles.statLabel}>Combo</Text>
+                    <Text style={styles.entryDate}>{formatDate(entry.timestamp)}</Text>
                   </View>
-                </View>
-              </LinearGradient>
-            ))
+
+                  <View style={styles.entryStats}>
+                    <View style={styles.statItem}>
+                      <Text
+                        style={[
+                          styles.statValue,
+                          { fontFamily: TYPOGRAPHY?.bold || 'System' },
+                        ]}
+                      >
+                        {displayValue}
+                      </Text>
+                      <Text style={styles.statLabel}>{displayLabel}</Text>
+                    </View>
+                    {!isSpeedTest && (
+                      <>
+                        <View style={styles.statDivider} />
+                        <View style={styles.statItem}>
+                          <Text
+                            style={[
+                              styles.statValue,
+                              {
+                                color: '#FF6B9D',
+                                fontFamily: TYPOGRAPHY?.bold || 'System',
+                              },
+                            ]}
+                          >
+                            {entry.combo}x
+                          </Text>
+                          <Text style={styles.statLabel}>Combo</Text>
+                        </View>
+                      </>
+                    )}
+                  </View>
+                </LinearGradient>
+              );
+            })
           )}
 
           <View style={{ height: 40 }} />
@@ -267,6 +342,7 @@ const styles = createSafeStyleSheet({
   tab: {
     flex: 1,
     paddingVertical: 12,
+    paddingHorizontal: 4, // FIX: Reduced padding to prevent text wrap
     borderRadius: 12,
     backgroundColor: 'rgba(26, 26, 46, 0.5)',
     alignItems: 'center',
@@ -275,7 +351,7 @@ const styles = createSafeStyleSheet({
     backgroundColor: '#4ECDC4',
   },
   tabText: {
-    fontSize: 16,
+    fontSize: 13, // FIX: Reduced from 16 to 13 to prevent text wrap
     fontWeight: 'bold',
     color: '#8B8B8B',
   },
@@ -360,6 +436,27 @@ const styles = createSafeStyleSheet({
     width: 1,
     height: 30,
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  targetCountSelector: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 20,
+    marginBottom: 15,
+  },
+  targetCountButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(78, 205, 196, 0.2)',
+  },
+  targetCountButtonActive: {
+    backgroundColor: '#4ECDC4',
+  },
+  targetCountText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#FFF',
   },
 });
 

@@ -10,6 +10,7 @@ import {
   ANIMATION_SCALE,
 } from '../utils/animationConstants';
 import { TOUCH_TARGET, ensureTouchTarget } from '../utils/layoutConstants';
+import NeonGlow from './NeonGlow';
 
 /**
  * Helper: Normalize any value to a primitive number
@@ -348,25 +349,19 @@ const NeonTarget = memo(function NeonTarget({ target, onTap, combo, theme = null
             minWidth: normalizedTouchMinimum,
             minHeight: normalizedTouchMinimum,
             // === NUMERIC NORMALIZATION FIX END ===
-            // === NEON SAFE VALUES FIX START ===
-            // 🎨 PREMIUM ESPORTS: Use theme accent color with premium glow
-            // Ensure all color values are strings, never objects
-            backgroundColor: safeAccentColor || (typeof target.color === 'string' ? target.color : '#4ECDC4'),
-            shadowColor: target.isDanger
-              ? (typeof DANGER_CONFIG.GLOW_COLOR === 'string' ? DANGER_CONFIG.GLOW_COLOR : '#FF0000')
-              : target.isPowerUp
-              ? (typeof POWERUP_CONFIG.GLOW_COLOR === 'string' ? POWERUP_CONFIG.GLOW_COLOR : '#FFA500')
-              : themeGlowColor,
-            shadowOpacity: glowOpacity, // Always plain number - shadowOpacity cannot use Animated values
-            shadowRadius: glowIntensity, // 🎨 PREMIUM ESPORTS: Softened radius from theme
-            elevation: glowIntensity,
+            // === AAA SKIA UPGRADE START ===
+            // 🎨 AAA VISUAL: Skia NeonGlow handles all visual effects
+            // Remove backgroundColor - Skia handles the glow
+            backgroundColor: 'transparent', // Transparent to show Skia glow underneath
+            // Keep border for visual definition (optional, can be removed if desired)
             borderWidth: target.isLucky ? 4 : 
                         target.isDanger ? 3 : 
                         target.isPowerUp ? 4 : 0,
             borderColor: target.isLucky ? '#FFD93D' : 
                         target.isDanger ? '#FF0000' : 
                         target.isPowerUp ? '#FFA500' : 'transparent',
-            // === NEON SAFE VALUES FIX END ===
+            // Remove shadow properties - Skia handles glow
+            // === AAA SKIA UPGRADE END ===
           },
         ]}
         android_ripple={{
@@ -375,18 +370,41 @@ const NeonTarget = memo(function NeonTarget({ target, onTap, combo, theme = null
           radius: normalizedTargetSize / 2, // Use normalized size
         }}
       >
+        {/* === AAA SKIA UPGRADE: NeonGlow Component === */}
+        {/* Render Skia glow behind all content */}
+        <NeonGlow
+          size={normalizedTargetSize}
+          color={
+            target.isDanger
+              ? (typeof DANGER_CONFIG.GLOW_COLOR === 'string' ? DANGER_CONFIG.GLOW_COLOR : '#FF0000')
+              : target.isPowerUp
+              ? (typeof POWERUP_CONFIG.GLOW_COLOR === 'string' ? POWERUP_CONFIG.GLOW_COLOR : '#FFA500')
+              : target.isLucky
+              ? '#FFD93D'
+              : themeGlowColor || safeAccentColor || '#4ECDC4'
+          }
+          intensity={
+            target.isDanger ? 1.3 : 
+            target.isPowerUp ? 1.4 : 
+            target.isLucky ? 1.2 : 
+            1.0 + Math.min(combo * 0.05, 0.3) // Combo boost
+          }
+          pulseEnabled={target.isDanger || target.isPowerUp || target.isLucky}
+        />
+        {/* === AAA SKIA UPGRADE: Icons rendered ON TOP of glow === */}
+        {/* CRITICAL: zIndex ensures icons are visible above NeonGlow */}
         {target.isLucky && (
-          <View style={styles.luckyContainer}>
+          <View style={[styles.luckyContainer, { zIndex: 10 }]}>
             <Text style={styles.luckyIcon}>⭐</Text>
           </View>
         )}
         {target.isDanger && (
-          <View style={styles.dangerContainer}>
+          <View style={[styles.dangerContainer, { zIndex: 10 }]}>
             <Text style={styles.dangerIcon}>⚠️</Text>
           </View>
         )}
         {target.isPowerUp && (
-          <View style={styles.powerUpContainer}>
+          <View style={[styles.powerUpContainer, { zIndex: 10 }]}>
             <Text style={styles.powerUpIcon}>💎</Text>
           </View>
         )}
@@ -394,11 +412,12 @@ const NeonTarget = memo(function NeonTarget({ target, onTap, combo, theme = null
           // 🔴 SAFE_EMOJI_PATCH: Never directly access emoji, always use safe fallback
           const safeEmoji = target?.ballEmoji ?? target?.emoji ?? target?.icon ?? target?.character ?? '⭕';
           return safeEmoji ? (
-            <View style={styles.ballEmojiContainer}>
+            <View style={[styles.ballEmojiContainer, { zIndex: 10 }]}>
               <Text style={styles.ballEmoji}>{safeEmoji}</Text>
             </View>
           ) : null;
         })()}
+        {/* Inner circle - optional, can be removed if Skia glow is sufficient */}
         <View
           style={[
             styles.innerCircle,
@@ -408,12 +427,14 @@ const NeonTarget = memo(function NeonTarget({ target, onTap, combo, theme = null
               backgroundColor: target.isDanger ? 'rgba(255, 0, 0, 0.6)' : 
                               target.isPowerUp ? 'rgba(255, 215, 0, 0.7)' :
                               'rgba(255, 255, 255, 0.3)',
+              zIndex: 5, // Above glow, below icons
             },
           ]}
         />
         
+        {/* Combo indicator - always on top */}
         {combo >= 5 && (
-          <View style={styles.comboIndicator}>
+          <View style={[styles.comboIndicator, { zIndex: 15 }]}>
             <Text style={styles.comboText}>{combo}×</Text>
           </View>
         )}

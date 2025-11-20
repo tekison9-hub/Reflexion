@@ -278,7 +278,7 @@ class MusicManager {
   }
 
   /**
-   * Enable/disable music
+   * Enable/disable music - AAA FIX: Pause/Resume instead of stop/restart
    */
   async setEnabled(enabled) {
     try {
@@ -289,8 +289,55 @@ class MusicManager {
         enabled.toString()
       );
 
+      // === AAA GAME JUICE: Pause/Resume instead of stop/restart ===
       if (!enabled) {
-        await this.stopAll();
+        // Music OFF: Pause if playing, don't unload
+        if (this.backgroundSound) {
+          try {
+            const status = await this.backgroundSound.getStatusAsync();
+            if (status.isLoaded && status.isPlaying) {
+              await this.backgroundSound.pauseAsync();
+              console.log('🎵 Music paused (not stopped)');
+            } else {
+              // If not playing, set volume to 0 as fallback
+              await this.backgroundSound.setVolumeAsync(0);
+              console.log('🎵 Music volume set to 0');
+            }
+          } catch (error) {
+            console.warn('⚠️ Failed to pause music:', error);
+          }
+        }
+      } else {
+        // Music ON: Resume if paused, or restore volume
+        if (this.backgroundSound) {
+          try {
+            const status = await this.backgroundSound.getStatusAsync();
+            if (status.isLoaded) {
+              // Restore appropriate volume based on current track
+              let volume = this.menuVolume;
+              if (this.currentTrack === 'gameplay') {
+                volume = this.gameplayVolume;
+              } else if (this.currentTrack === 'zen') {
+                volume = this.zenVolume;
+              }
+              
+              await this.backgroundSound.setVolumeAsync(volume);
+              
+              if (!status.isPlaying) {
+                await this.backgroundSound.playAsync();
+                console.log('🎵 Music resumed from pause');
+              } else {
+                console.log('🎵 Music volume restored');
+              }
+            }
+          } catch (error) {
+            console.warn('⚠️ Failed to resume music:', error);
+            // If resume fails, try to reload the track
+            if (this.currentTrack) {
+              await this.playBackground(this.currentTrack);
+            }
+          }
+        }
       }
 
       console.log(`🎵 Music ${enabled ? 'enabled' : 'disabled'}`);

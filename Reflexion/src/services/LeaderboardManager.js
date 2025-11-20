@@ -10,6 +10,7 @@ import { GAME_MODES } from '../utils/GameLogic';
 const LEADERBOARD_KEYS = {
   CLASSIC: '@leaderboard_classic',
   RUSH: '@leaderboard_rush',
+  SPEED_TEST: '@leaderboard_speed_test', // === AAA LEADERBOARD: Speed Test support ===
   LAST_RESET: '@leaderboard_last_reset',
 };
 
@@ -21,6 +22,7 @@ class LeaderboardManager {
     this.leaderboards = {
       [GAME_MODES.CLASSIC]: [],
       [GAME_MODES.RUSH]: [],
+      [GAME_MODES.SPEED_TEST]: [], // === AAA LEADERBOARD: Speed Test support ===
     };
     this.lastResetDate = null;
     this.isInitialized = false;
@@ -64,11 +66,15 @@ class LeaderboardManager {
       const rushData = await AsyncStorage.getItem(LEADERBOARD_KEYS.RUSH);
       this.leaderboards[GAME_MODES.RUSH] = rushData ? JSON.parse(rushData) : [];
 
+      // === AAA LEADERBOARD: Load Speed Test leaderboard ===
+      const speedTestData = await AsyncStorage.getItem(LEADERBOARD_KEYS.SPEED_TEST);
+      this.leaderboards[GAME_MODES.SPEED_TEST] = speedTestData ? JSON.parse(speedTestData) : [];
+
       // Load last reset date
       const lastResetData = await AsyncStorage.getItem(LEADERBOARD_KEYS.LAST_RESET);
       this.lastResetDate = lastResetData ? parseInt(lastResetData) : Date.now();
 
-      console.log(`📊 Loaded leaderboards: Classic (${this.leaderboards[GAME_MODES.CLASSIC].length}), Rush (${this.leaderboards[GAME_MODES.RUSH].length})`);
+      console.log(`📊 Loaded leaderboards: Classic (${this.leaderboards[GAME_MODES.CLASSIC].length}), Rush (${this.leaderboards[GAME_MODES.RUSH].length}), Speed Test (${this.leaderboards[GAME_MODES.SPEED_TEST].length})`);
     } catch (error) {
       console.error('Error loading leaderboards:', error);
     }
@@ -95,11 +101,13 @@ class LeaderboardManager {
       // Clear all leaderboards
       this.leaderboards[GAME_MODES.CLASSIC] = [];
       this.leaderboards[GAME_MODES.RUSH] = [];
+      this.leaderboards[GAME_MODES.SPEED_TEST] = []; // === AAA LEADERBOARD: Reset Speed Test ===
       this.lastResetDate = Date.now();
 
       // Save to AsyncStorage
       await AsyncStorage.setItem(LEADERBOARD_KEYS.CLASSIC, JSON.stringify([]));
       await AsyncStorage.setItem(LEADERBOARD_KEYS.RUSH, JSON.stringify([]));
+      await AsyncStorage.setItem(LEADERBOARD_KEYS.SPEED_TEST, JSON.stringify([])); // === AAA LEADERBOARD: Reset Speed Test ===
       await AsyncStorage.setItem(LEADERBOARD_KEYS.LAST_RESET, this.lastResetDate.toString());
 
       console.log('✅ Leaderboards reset successfully');
@@ -110,49 +118,79 @@ class LeaderboardManager {
 
   /**
    * Add a score to the leaderboard
-   * @param {string} mode - Game mode (CLASSIC or RUSH)
-   * @param {object} entry - Score entry { score, combo, timestamp, playerName }
+   * @param {string} mode - Game mode (CLASSIC, RUSH, or SPEED_TEST)
+   * @param {object} entry - Score entry { score, combo, timestamp, playerName, time (for Speed Test), targetCount (for Speed Test) }
    */
   async addScore(mode, entry) {
     if (!this.isInitialized) {
       await this.initialize();
     }
 
-    if (mode !== GAME_MODES.CLASSIC && mode !== GAME_MODES.RUSH) {
+    if (mode !== GAME_MODES.CLASSIC && mode !== GAME_MODES.RUSH && mode !== GAME_MODES.SPEED_TEST) {
       console.warn(`Invalid mode: ${mode}`);
       return false;
     }
 
     try {
-      // Get current leaderboard
-      const leaderboard = this.leaderboards[mode];
+      // ✅ FIX: Speed Test için target count'a göre ayrı key kullan
+      let storageKey;
+      if (mode === GAME_MODES.SPEED_TEST) {
+        const targetCount = entry.targetCount || 50;
+        storageKey = `@leaderboard_speed_test_${targetCount}`; // Örn: @leaderboard_speed_test_20
+      } else if (mode === GAME_MODES.CLASSIC) {
+        storageKey = LEADERBOARD_KEYS.CLASSIC;
+      } else if (mode === GAME_MODES.RUSH) {
+        storageKey = LEADERBOARD_KEYS.RUSH;
+      } else {
+        return false;
+      }
 
-      // Add new entry with timestamp
+      // Mevcut leaderboard'u al
+      const data = await AsyncStorage.getItem(storageKey);
+      let leaderboard = data ? JSON.parse(data) : [];
+
+      // === AAA LEADERBOARD: Speed Test uses time, others use score ===
+      const isSpeedTest = mode === GAME_MODES.SPEED_TEST;
+      
+      // Yeni entry ekle
       const newEntry = {
-        score: entry.score,
+        score: entry.score || 0,
         combo: entry.combo || 0,
+        // FIX: Speed Test için time field'ını doğru set et (saniye cinsinden)
+        time: isSpeedTest ? (entry.time !== null && entry.time !== undefined ? parseFloat(entry.time) : null) : null,
+        targetCount: entry.targetCount || null,
         timestamp: entry.timestamp || Date.now(),
         playerName: entry.playerName || 'Player',
       };
 
       leaderboard.push(newEntry);
 
-      // Sort by score (descending)
-      leaderboard.sort((a, b) => b.score - a.score);
-
-      // Keep only top 10
-      if (leaderboard.length > MAX_ENTRIES) {
-        leaderboard.splice(MAX_ENTRIES);
+      // === FIX: Sort by time (ascending) for Speed Test, score (descending) for others ===
+      if (isSpeedTest) {
+        // FIX: Speed Test - EN DÜŞÜK SÜRE EN ÜSTTE (Küçükten büyüğe sıralama)
+        leaderboard.sort((a, b) => {
+          const timeA = a.time !== null && a.time !== undefined ? parseFloat(a.time) : Infinity;
+          const timeB = b.time !== null && b.time !== undefined ? parseFloat(b.time) : Infinity;
+          
+          // Önce süreye göre sırala (küçükten büyüğe: 5.2s üstte, 15.5s altta)
+          if (timeA !== timeB) {
+            return timeA - timeB; // ✅ DOĞRU: Küçükten büyüğe
+          }
+          
+          // Süreler eşitse timestamp'e göre (daha yeni üstte)
+          return (b.timestamp || 0) - (a.timestamp || 0);
+        });
+      } else {
+        // Classic/Rush: Higher score is better (descending order)
+        leaderboard.sort((a, b) => b.score - a.score);
       }
 
-      // Save to AsyncStorage
-      const storageKey = mode === GAME_MODES.CLASSIC 
-        ? LEADERBOARD_KEYS.CLASSIC 
-        : LEADERBOARD_KEYS.RUSH;
-
+      // Top 10'u kaydet
+      leaderboard = leaderboard.slice(0, MAX_ENTRIES);
       await AsyncStorage.setItem(storageKey, JSON.stringify(leaderboard));
 
-      console.log(`📊 Score added to ${mode} leaderboard: ${entry.score}`);
+      const displayValue = isSpeedTest ? `${entry.time?.toFixed(1)}s` : entry.score;
+      console.log(`✅ Leaderboard updated (${mode}${isSpeedTest ? ` - ${entry.targetCount || 50} targets` : ''}):`, leaderboard.map(e => e.time || e.score));
 
       // Check if entry made it to top 10
       const rank = leaderboard.findIndex(e => e.timestamp === newEntry.timestamp) + 1;
@@ -166,18 +204,51 @@ class LeaderboardManager {
   /**
    * Get leaderboard for a specific mode
    * @param {string} mode - Game mode
+   * @param {number} targetCount - Target count for Speed Test (optional)
    * @returns {Array} Sorted leaderboard entries
    */
-  async getLeaderboard(mode) {
+  async getLeaderboard(mode, targetCount = null) {
     if (!this.isInitialized) {
       await this.initialize();
     }
 
-    if (mode !== GAME_MODES.CLASSIC && mode !== GAME_MODES.RUSH) {
+    try {
+      let storageKey;
+      if (mode === GAME_MODES.SPEED_TEST && targetCount) {
+        storageKey = `@leaderboard_speed_test_${targetCount}`;
+      } else if (mode === GAME_MODES.SPEED_TEST) {
+        storageKey = '@leaderboard_speed_test_50'; // Default 50
+      } else if (mode === GAME_MODES.CLASSIC) {
+        storageKey = LEADERBOARD_KEYS.CLASSIC;
+      } else if (mode === GAME_MODES.RUSH) {
+        storageKey = LEADERBOARD_KEYS.RUSH;
+      } else {
+        return [];
+      }
+
+      const data = await AsyncStorage.getItem(storageKey);
+      let leaderboard = data ? JSON.parse(data) : [];
+      
+      // FIX: Tekrar sırala (güvenlik için) - Speed Test için küçükten büyüğe
+      if (mode === GAME_MODES.SPEED_TEST) {
+        return leaderboard.sort((a, b) => {
+          const timeA = a.time !== null && a.time !== undefined ? parseFloat(a.time) : Infinity;
+          const timeB = b.time !== null && b.time !== undefined ? parseFloat(b.time) : Infinity;
+          
+          if (timeA !== timeB) {
+            return timeA - timeB; // ✅ Küçükten büyüğe (5.2s üstte)
+          }
+          
+          return (b.timestamp || 0) - (a.timestamp || 0);
+        });
+      }
+      
+      // Classic/Rush: Yüksekten düşüğe
+      return leaderboard.sort((a, b) => b.score - a.score);
+    } catch (error) {
+      console.error('❌ getLeaderboard error:', error);
       return [];
     }
-
-    return this.leaderboards[mode] || [];
   }
 
   /**

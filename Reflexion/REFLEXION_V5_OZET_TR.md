@@ -434,3 +434,10 @@ npx expo start
 
 
 
+
+
+
+
+
+
+

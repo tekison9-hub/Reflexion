@@ -290,3 +290,10 @@ npx expo start -c
 
 
 
+
+
+
+
+
+
+

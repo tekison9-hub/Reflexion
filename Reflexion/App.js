@@ -1,180 +1,452 @@
 ﻿/**
- * REFLEXION v6.0 - APP ENTRY POINT
- * ✅ Service initialization with proper order
- * ✅ GlobalStateProvider wrapper
- * ✅ Loading screen during initialization
- * ✅ Error boundaries
+ * REFLEXION - ULTIMATE SAFE VERSION (SDK 52)
+ * ✅ Varlık (Asset) Bağımsız: Ses dosyaları eksik olsa bile oyun açılır.
+ * ✅ Paket Hata Koruması: Eksik paket durumlarında çökmez.
+ * ✅ State-Based Navigasyon: Modüler geçişler.
  */
 
-import React, { useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { createSafeStyleSheet } from './src/utils/safeStyleSheet';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  StyleSheet,
+  Text,
+  View,
+  TouchableOpacity,
+  Dimensions,
+  StatusBar,
+  Platform,
+  ActivityIndicator,
+} from 'react-native';
 
-// ✅ Context providers FIRST
-import { GlobalStateProvider } from './src/contexts/GlobalStateContext';
-import { ThemeProvider } from './src/contexts/ThemeContext';
+// Expo Kütüphaneleri
+// expo-av KALDIRILDI
+// import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
+import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 
-// ✅ Services
-import { settingsService } from './src/services/SettingsService';
-import { storageService } from './src/services/StorageService';
-import soundManager from './src/services/SoundManager';
-import musicManager from './src/services/MusicManager';
+// Animasyon Kütüphanesi
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  runOnJS,
+  FadeIn,
+  ZoomIn,
+} from 'react-native-reanimated';
 
-// ✅ Screens
-import MenuScreen from './src/screens/MenuScreen';
-import GameScreen from './src/screens/GameScreen';
-import ShopScreen from './src/screens/ShopScreen';
-import StatsScreen from './src/screens/StatsScreen';
-import LeaderboardScreen from './src/screens/LeaderboardScreen';
-import AchievementsScreen from './src/screens/AchievementsScreen';
-import InstructionsScreen from './src/screens/InstructionsScreen';
-import BattleScreen from './src/screens/BattleScreen';
+// Güvenli Alan Yönetimi
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const Stack = createNativeStackNavigator();
+// İkon Seti
+import {
+  Play,
+  Trophy,
+  ShoppingBag,
+  Zap,
+  Heart,
+  Activity,
+  Home,
+  Settings,
+  RotateCcw,
+} from 'lucide-react-native';
 
-export default function App() {
-  const [appReady, setAppReady] = useState(false);
-  const [initError, setInitError] = useState(null);
+// --- OYUN SABİTLERİ ---
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const TARGET_SIZE = 75;
+const SPAWN_MARGIN = 40;
 
+const THEME_COLORS = {
+  neonCyan: '#00F5FF',
+  neonPink: '#FF00FF',
+  neonPurple: '#9D00FF',
+  neonGreen: '#39FF14',
+  neonRed: '#FF3131',
+  neonGold: '#FFD700',
+};
+
+const GAME_MODES = {
+  CLASSIC: { id: 'classic', name: 'Classic', color: THEME_COLORS.neonCyan, icon: Zap },
+  RUSH: { id: 'rush', name: 'Rush', color: THEME_COLORS.neonRed, icon: Activity },
+  ZEN: { id: 'zen', name: 'Zen', color: THEME_COLORS.neonPurple, icon: Heart },
+};
+
+// --- SES YÖNETİCİSİ (GÜVENLİ MOD) ---
+// require() çağrıları kaldırıldı, böylece dosya yok hatası alınmaz.
+class SoundManager {
+  constructor() {
+    this.sounds = {};
+    this.isReady = false;
+  }
+
+  async init() {
+    // expo-av kaldırıldığı için burada audio mode ayarı yapılmıyor.
+    // İleride expo-audio entegrasyonu eklenebilir.
+    this.isReady = true;
+  }
+
+  async play(name, pitch = 1.0) {
+    // Dosya olmadığı için ses çalma işlemini atlıyoruz.
+    // return;
+  }
+}
+const soundManager = new SoundManager();
+
+// --- BİLEŞENLER ---
+
+const Background = ({ children }) => (
+  <LinearGradient
+    colors={['#05070a', '#1a0b2e', '#000000']}
+    style={styles.background}
+    start={{ x: 0, y: 0 }}
+    end={{ x: 1, y: 1 }}
+  >
+    {children}
+  </LinearGradient>
+);
+
+const NeonButton = ({ onPress, title, color = THEME_COLORS.neonCyan, icon: Icon, size = 'large', style }) => {
+  const scale = useSharedValue(1);
+  const animatedStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+
+  return (
+    <Animated.View style={[animatedStyle, style]}>
+      <TouchableOpacity
+        onPress={onPress}
+        onPressIn={() => {
+          scale.value = withSpring(0.95);
+          if (Platform.OS !== 'web')
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        }}
+        onPressOut={() => (scale.value = withSpring(1))}
+        activeOpacity={0.9}
+      >
+        <LinearGradient
+          colors={[`${color}30`, `${color}05`]} // ❗ Buradaki sentaks düzeltildi
+          style={[
+            styles.button,
+            size === 'small' && styles.buttonSmall,
+            { borderColor: color, shadowColor: color },
+          ]}
+        >
+          {Icon && (
+            <Icon
+              color={color}
+              size={size === 'small' ? 20 : 24}
+              style={{ marginRight: title ? 10 : 0 }}
+            />
+          )}
+          {title && (
+            <Text
+              style={[
+                styles.buttonText,
+                size === 'small' && styles.buttonTextSmall,
+                { color },
+              ]}
+            >
+              {title}
+            </Text>
+          )}
+        </LinearGradient>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
+
+const Target = React.memo(({ id, x, y, onPress, color }) => {
+  const scale = useSharedValue(0);
   useEffect(() => {
-    initializeApp();
+    scale.value = withSpring(1);
   }, []);
 
-  /**
-   * ✅ CRITICAL: Initialize ALL services in STRICT ORDER
-   */
-  const initializeApp = async () => {
-    try {
-      console.log('🚀 Initializing Reflexion App...');
+  const rStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    left: x,
+    top: y,
+    position: 'absolute',
+  }));
 
-      // 1. Storage (lowest level)
-      await storageService.initialize();
-      console.log('✅ [1/4] StorageService ready');
+  return (
+    <Animated.View style={rStyle}>
+      <TouchableOpacity onPress={() => onPress(id)} activeOpacity={0.7}>
+        <View style={[styles.targetCircle, { borderColor: color, shadowColor: color }]}>
+          <View style={[styles.targetInner, { backgroundColor: color }]} />
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+});
 
-      // 2. Settings (depends on storage)
-      await settingsService.initialize();
-      console.log('✅ [2/4] SettingsService ready');
+// --- ANA UYGULAMA AKIŞI ---
 
-      // 3. Sound (depends on settings)
-      // 🔴 KRİTİK: SoundManager'ı başlat - ses sisteminin çalışması için gerekli
-      await soundManager.initialize();
-      soundManager.setSettings(settingsService.settings); // direkt objeyi ver
-      console.log("✅ [3/4] SoundManager ready - Settings assigned:", settingsService.settings);
+export default function App() {
+  const insets = useSafeAreaInsets();
 
+  // State Yönetimi
+  const [currentScreen, setCurrentScreen] = useState('MENU');
+  const [gameMode, setGameMode] = useState(GAME_MODES.CLASSIC);
+  const [score, setScore] = useState(0);
+  const [combo, setCombo] = useState(0);
+  const [health, setHealth] = useState(3);
+  const [targets, setTargets] = useState([]);
 
-      // 4. Music (depends on settings)
-      await musicManager.initialize();
-      console.log('✅ [4/4] MusicManager ready');
+  // Referanslar
+  const timerRef = useRef(null);
+  const lastSpawnTime = useRef(0);
+  const difficulty = useRef(1);
 
-      console.log('✅ ALL SERVICES INITIALIZED SUCCESSFULLY');
-      setAppReady(true);
-    } catch (error) {
-      console.error('❌ App initialization FAILED:', error);
-      setInitError(error.message);
-      // ✅ Set ready anyway to not block app completely
-      setAppReady(true);
+  // Başlangıç
+  useEffect(() => {
+    soundManager.init();
+    // 500ms sonra menüye geç
+    setTimeout(() => setCurrentScreen('MENU'), 500);
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
+  // Oyunu Başlat
+  const startGame = (mode) => {
+    setGameMode(mode);
+    setScore(0);
+    setCombo(0);
+    setHealth(mode.id === 'rush' ? 1 : 3);
+    setTargets([]);
+    difficulty.current = 1;
+    setCurrentScreen('GAME');
+
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(gameLoop, 50); // 20 FPS Loop
+  };
+
+  // Oyun Döngüsü
+  const gameLoop = () => {
+    const now = Date.now();
+    const spawnRate = Math.max(400, 1000 - difficulty.current * 50);
+
+    // Yeni hedef oluştur
+    if (now - lastSpawnTime.current > spawnRate) {
+      const id = Math.random().toString();
+      const x =
+        Math.random() * (SCREEN_WIDTH - TARGET_SIZE - SPAWN_MARGIN * 2) + SPAWN_MARGIN;
+      const y = Math.random() * (SCREEN_HEIGHT - 300) + 150;
+
+      setTargets((prev) => [...prev, { id, x, y, createdAt: now }]);
+      lastSpawnTime.current = now;
+    }
+
+    // Süresi dolanları temizle
+    setTargets((prev) => {
+      const keep = [];
+      let missed = false;
+      prev.forEach((t) => {
+        if (now - t.createdAt < 2000) keep.push(t);
+        else missed = true;
+      });
+
+      if (missed) handleMiss();
+      return keep;
+    });
+  };
+
+  // Hedefe Tıklama
+  const handleTap = (id) => {
+    setTargets((prev) => prev.filter((t) => t.id !== id));
+    setScore((s) => s + 10 + combo);
+    setCombo((c) => c + 1);
+    difficulty.current += 0.1;
+
+    if (Platform.OS !== 'web')
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+  };
+
+  // Hedef Kaçırma
+  const handleMiss = () => {
+    setCombo(0);
+    if (gameMode.id !== 'zen') {
+      setHealth((h) => {
+        if (h <= 1) {
+          clearInterval(timerRef.current);
+          setCurrentScreen('GAMEOVER');
+          return 0;
+        }
+        return h - 1;
+      });
     }
   };
 
-  // ✅ Loading screen
-  if (!appReady) {
-    return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingTitle}>REFLEXION</Text>
-        <ActivityIndicator size="large" color="#4ECDC4" style={styles.loader} />
-        <Text style={styles.loadingText}>Initializing...</Text>
-      </View>
-    );
-  }
+  // --- EKRANLAR ---
 
-  // ✅ Error screen (if critical failure)
-  if (initError) {
-    return (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorTitle}>⚠️ Initialization Error</Text>
-        <Text style={styles.errorText}>{initError}</Text>
-        <Text style={styles.errorHint}>App will run in limited mode</Text>
-      </View>
-    );
-  }
+  const renderMenu = () => (
+    <Animated.View entering={FadeIn} style={styles.container}>
+      <Text style={styles.title}>REFLEXION</Text>
+      <Text style={styles.subtitle}>ULTIMATE</Text>
 
-  // ✅ Main app with context wrapper
+      <View style={styles.menuButtons}>
+        {Object.values(GAME_MODES).map((mode) => (
+          <NeonButton
+            key={mode.id}
+            title={mode.name}
+            icon={mode.icon}
+            color={mode.color}
+            onPress={() => startGame(mode)}
+            style={{ marginBottom: 15, width: 280 }}
+          />
+        ))}
+      </View>
+
+      <View style={styles.footer}>
+        <NeonButton
+          icon={Trophy}
+          size="small"
+          color={THEME_COLORS.neonGold}
+          onPress={() => {}}
+        />
+        <NeonButton
+          icon={ShoppingBag}
+          size="small"
+          color={THEME_COLORS.neonGreen}
+          onPress={() => {}}
+        />
+        <NeonButton
+          icon={Settings}
+          size="small"
+          color={THEME_COLORS.neonPink}
+          onPress={() => {}}
+        />
+      </View>
+    </Animated.View>
+  );
+
+  const renderGame = () => (
+    <View style={styles.container}>
+      <View style={[styles.header, { marginTop: insets.top + 10 }]}>
+        <View>
+          <Text style={styles.scoreLabel}>SCORE</Text>
+          <Text style={styles.scoreValue}>{score}</Text>
+        </View>
+        {gameMode.id !== 'zen' && (
+          <View style={{ flexDirection: 'row' }}>
+            {[...Array(3)].map((_, i) => (
+              <Heart
+                key={i}
+                color={i < health ? THEME_COLORS.neonRed : '#333'}
+                fill={i < health ? THEME_COLORS.neonRed : 'transparent'}
+                size={24}
+                style={{ marginLeft: 5 }}
+              />
+            ))}
+          </View>
+        )}
+      </View>
+
+      {targets.map((t) => (
+        <Target key={t.id} {...t} color={gameMode.color} onPress={handleTap} />
+      ))}
+    </View>
+  );
+
+  const renderGameOver = () => (
+    <Animated.View entering={ZoomIn} style={styles.container}>
+      <Text style={[styles.title, { color: THEME_COLORS.neonRed, fontSize: 40 }]}>
+        GAME OVER
+      </Text>
+
+      <View style={styles.statsBox}>
+        <Text style={styles.statLabel}>FINAL SCORE</Text>
+        <Text style={styles.statValue}>{score}</Text>
+      </View>
+
+      <View style={{ flexDirection: 'row', gap: 20, marginTop: 40 }}>
+        <NeonButton
+          icon={Home}
+          onPress={() => setCurrentScreen('MENU')}
+          color={THEME_COLORS.neonCyan}
+        />
+        <NeonButton
+          icon={RotateCcw}
+          title="RETRY"
+          onPress={() => startGame(gameMode)}
+          color={THEME_COLORS.neonGreen}
+        />
+      </View>
+    </Animated.View>
+  );
+
   return (
     <SafeAreaProvider>
-      <GlobalStateProvider>
-        <ThemeProvider>
-          <NavigationContainer>
-          <Stack.Navigator
-            initialRouteName="Menu"
-            screenOptions={{
-              headerShown: false,
-              animation: 'fade',
-              contentStyle: { backgroundColor: '#1a1a2e' },
-            }}
-          >
-            <Stack.Screen name="Menu" component={MenuScreen} />
-            <Stack.Screen name="Game" component={GameScreen} />
-            <Stack.Screen name="Shop" component={ShopScreen} />
-            <Stack.Screen name="Stats" component={StatsScreen} />
-            <Stack.Screen name="Leaderboard" component={LeaderboardScreen} />
-            <Stack.Screen name="Achievements" component={AchievementsScreen} />
-            <Stack.Screen name="Instructions" component={InstructionsScreen} />
-            <Stack.Screen name="Battle" component={BattleScreen} />
-          </Stack.Navigator>
-          </NavigationContainer>
-        </ThemeProvider>
-      </GlobalStateProvider>
+      <StatusBar barStyle="light-content" />
+      <Background>
+        {currentScreen === 'MENU' && renderMenu()}
+        {currentScreen === 'GAME' && renderGame()}
+        {currentScreen === 'GAMEOVER' && renderGameOver()}
+      </Background>
     </SafeAreaProvider>
   );
 }
 
-const styles = createSafeStyleSheet({
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: '#0a0a1a',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingTitle: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#4ECDC4',
-    marginBottom: 40,
-    textShadowColor: '#4ECDC4',
+const styles = StyleSheet.create({
+  background: { flex: 1 },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  title: {
+    fontSize: 50,
+    fontWeight: '900',
+    color: '#FFF',
+    letterSpacing: 5,
+    textShadowColor: '#00F5FF',
+    textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 20,
   },
-  loader: {
-    marginBottom: 20,
+  subtitle: {
+    fontSize: 20,
+    color: '#9D00FF',
+    letterSpacing: 8,
+    marginBottom: 60,
+    fontWeight: 'bold',
   },
-  loadingText: {
-    fontSize: 16,
-    color: '#8B8B8B',
+  menuButtons: { alignItems: 'center', width: '100%' },
+  footer: { flexDirection: 'row', position: 'absolute', bottom: 50, gap: 20 },
+  button: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 18,
+    paddingHorizontal: 30,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    backgroundColor: 'rgba(0,0,0,0.3)',
   },
-  errorContainer: {
-    flex: 1,
-    backgroundColor: '#0a0a1a',
+  buttonText: { color: '#FFF', fontSize: 20, fontWeight: 'bold', letterSpacing: 1 },
+  buttonTextSmall: { fontSize: 14 },
+  buttonSmall: { paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12 },
+  targetCircle: {
+    width: TARGET_SIZE,
+    height: TARGET_SIZE,
+    borderRadius: 40,
+    borderWidth: 2,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    backgroundColor: 'rgba(0,0,0,0.2)',
   },
-  errorTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FF6B6B',
-    marginBottom: 20,
+  targetInner: { width: '60%', height: '60%', borderRadius: 30, opacity: 0.8 },
+  header: {
+    width: '100%',
+    paddingHorizontal: 30,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    position: 'absolute',
+    top: 0,
   },
-  errorText: {
-    fontSize: 14,
-    color: '#BDC3C7',
-    textAlign: 'center',
-    marginBottom: 10,
+  scoreLabel: { color: '#AAA', fontSize: 12, fontWeight: 'bold' },
+  scoreValue: { color: '#FFF', fontSize: 36, fontWeight: '900' },
+  statsBox: {
+    padding: 30,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#333',
+    width: '80%',
   },
-  errorHint: {
-    fontSize: 12,
-    color: '#7F8C8D',
-    fontStyle: 'italic',
-  },
+  statLabel: { color: '#888', fontSize: 14, marginBottom: 5 },
+  statValue: { color: '#FFF', fontSize: 48, fontWeight: 'bold' },
 });

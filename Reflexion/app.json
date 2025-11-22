@@ -2,7 +2,7 @@
   "expo": {
     "name": "Reflexion",
     "slug": "reflexion",
-    "version": "2.0.0",
+    "version": "7.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -11,45 +11,49 @@
       "resizeMode": "contain",
       "backgroundColor": "#0A0E1A"
     },
-    "assetBundlePatterns": ["**/*"],
-
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.reflexion.game",
-      "buildNumber": "1.0.0",
       "infoPlist": {
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
-
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A0E1A"
       },
       "package": "com.reflexion.game",
-      "versionCode": 2,
-      "permissions": ["VIBRATE"]
+      "permissions": [
+        "VIBRATE"
+      ]
     },
-
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
-
     "plugins": [
       [
         "expo-build-properties",
         {
           "android": {
+            "newArchEnabled": false,
+            "usesCleartextTraffic": true,
+            "gradleVersion": "8.3",
+            "kotlinVersion": "1.9.22",
             "compileSdkVersion": 34,
             "targetSdkVersion": 34,
-            "minSdkVersion": 24,
-            "usesCleartextTraffic": true
+            "buildToolsVersion": "34.0.0",
+            "minSdkVersion": 23
+          },
+          "ios": {
+            "newArchEnabled": false
           }
         }
-      ]
+      ],
+      "expo-font"
     ],
-
     "extra": {
       "eas": {
         "projectId": "7769631b-7174-4de7-8ee4-96943958c602"

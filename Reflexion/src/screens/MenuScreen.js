@@ -10,6 +10,9 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import GlassButton from '../components/GlassButton';
+import XPConfetti from '../components/XPConfetti';
 import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -322,6 +325,13 @@ const MenuScreen = React.memo(({ navigation }) => {
   }, [playerProgress]);
 
   const handleButtonPress = useCallback((action) => {
+    // ✅ AAA: Haptic feedback for tactile response
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (e) {
+      // Haptics not available on this device
+    }
+
     // ✅ SAFE: Sound with error handling
     soundManager.play('tap').catch(err => {
       console.warn('⚠️ Sound failed:', err);

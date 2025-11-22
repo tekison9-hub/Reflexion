@@ -196,3 +196,4 @@ if (settingsService && typeof settingsService.getHapticsEnabled === 'function') 
 
 
 
+

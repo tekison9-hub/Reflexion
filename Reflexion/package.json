@@ -33,6 +33,10 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2"
+  },
+  "overrides": {
+    "@unimodules/core": "npm:expo-modules-core@1.12.26",
+    "unimodules-permissions-interface": "npm:expo-modules-core@1.12.26"
   }
 }
 

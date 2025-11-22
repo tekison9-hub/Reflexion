@@ -687,3 +687,4 @@ const coins = calculateCoinsEarned({
 
 
 
+

@@ -18,8 +18,7 @@ import {
 } from 'react-native';
 
 // Expo Kütüphaneleri
-// expo-av KALDIRILDI
-// import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
+import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -78,16 +77,31 @@ class SoundManager {
   }
 
   async init() {
-    // expo-av kaldırıldığı için burada audio mode ayarı yapılmıyor.
-    // İleride expo-audio entegrasyonu eklenebilir.
+    if (Platform.OS !== 'web') {
+      try {
+        await Audio.setAudioModeAsync({
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          interruptionModeIOS: InterruptionModeIOS.DuckOthers,
+          shouldDuckAndroid: true,
+          interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+        });
+      } catch (e) {
+        console.log('Ses ayarları yapılandırılamadı (Önemsiz):', e);
+      }
+    }
+
+    // NOT: Ses dosyalarını buraya require ile eklersen ve dosya yoksa uygulama açılmaz.
+    // O yüzden şimdilik boş geçiyoruz.
     this.isReady = true;
   }
 
   async play(name, pitch = 1.0) {
-    // Dosya olmadığı için ses çalma işlemini atlıyoruz.
+    // Şu an sesler pasif; ileride asset ekleyince burayı doldurabilirsin.
     // return;
   }
 }
+
 const soundManager = new SoundManager();
 
 // --- BİLEŞENLER ---
@@ -103,9 +117,18 @@ const Background = ({ children }) => (
   </LinearGradient>
 );
 
-const NeonButton = ({ onPress, title, color = THEME_COLORS.neonCyan, icon: Icon, size = 'large', style }) => {
+const NeonButton = ({
+  onPress,
+  title,
+  color = THEME_COLORS.neonCyan,
+  icon: Icon,
+  size = 'large',
+  style,
+}) => {
   const scale = useSharedValue(1);
-  const animatedStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
   return (
     <Animated.View style={[animatedStyle, style]}>
@@ -113,14 +136,17 @@ const NeonButton = ({ onPress, title, color = THEME_COLORS.neonCyan, icon: Icon,
         onPress={onPress}
         onPressIn={() => {
           scale.value = withSpring(0.95);
-          if (Platform.OS !== 'web')
+          if (Platform.OS !== 'web') {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+          }
         }}
-        onPressOut={() => (scale.value = withSpring(1))}
+        onPressOut={() => {
+          scale.value = withSpring(1);
+        }}
         activeOpacity={0.9}
       >
         <LinearGradient
-          colors={[`${color}30`, `${color}05`]} // ❗ Buradaki sentaks düzeltildi
+          colors={[`${color}30`, `${color}05`]}
           style={[
             styles.button,
             size === 'small' && styles.buttonSmall,
@@ -153,6 +179,7 @@ const NeonButton = ({ onPress, title, color = THEME_COLORS.neonCyan, icon: Icon,
 
 const Target = React.memo(({ id, x, y, onPress, color }) => {
   const scale = useSharedValue(0);
+
   useEffect(() => {
     scale.value = withSpring(1);
   }, []);
@@ -175,9 +202,9 @@ const Target = React.memo(({ id, x, y, onPress, color }) => {
   );
 });
 
-// --- ANA UYGULAMA AKIŞI ---
+// --- ANA APP LOGİĞİ (Provider içinde çalışacak) ---
 
-export default function App() {
+function MainApp() {
   const insets = useSafeAreaInsets();
 
   // State Yönetimi
@@ -197,14 +224,15 @@ export default function App() {
   useEffect(() => {
     soundManager.init();
     // 500ms sonra menüye geç
-    setTimeout(() => setCurrentScreen('MENU'), 500);
+    const timeout = setTimeout(() => setCurrentScreen('MENU'), 500);
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      clearTimeout(timeout);
     };
   }, []);
 
-  // Oyunu Başlat
+  // OYUNU BAŞLAT
   const startGame = (mode) => {
     setGameMode(mode);
     setScore(0);
@@ -218,7 +246,7 @@ export default function App() {
     timerRef.current = setInterval(gameLoop, 50); // 20 FPS Loop
   };
 
-  // Oyun Döngüsü
+  // OYUN DÖNGÜSÜ
   const gameLoop = () => {
     const now = Date.now();
     const spawnRate = Math.max(400, 1000 - difficulty.current * 50);
@@ -238,6 +266,7 @@ export default function App() {
     setTargets((prev) => {
       const keep = [];
       let missed = false;
+
       prev.forEach((t) => {
         if (now - t.createdAt < 2000) keep.push(t);
         else missed = true;
@@ -248,24 +277,25 @@ export default function App() {
     });
   };
 
-  // Hedefe Tıklama
+  // HEDEFE TIKLAMA
   const handleTap = (id) => {
     setTargets((prev) => prev.filter((t) => t.id !== id));
     setScore((s) => s + 10 + combo);
     setCombo((c) => c + 1);
     difficulty.current += 0.1;
 
-    if (Platform.OS !== 'web')
+    if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
   };
 
-  // Hedef Kaçırma
+  // HEDEF KAÇIRMA
   const handleMiss = () => {
     setCombo(0);
     if (gameMode.id !== 'zen') {
       setHealth((h) => {
         if (h <= 1) {
-          clearInterval(timerRef.current);
+          if (timerRef.current) clearInterval(timerRef.current);
           setCurrentScreen('GAMEOVER');
           return 0;
         }
@@ -300,18 +330,21 @@ export default function App() {
           size="small"
           color={THEME_COLORS.neonGold}
           onPress={() => {}}
+          style={{ marginHorizontal: 10 }}
         />
         <NeonButton
           icon={ShoppingBag}
           size="small"
           color={THEME_COLORS.neonGreen}
           onPress={() => {}}
+          style={{ marginHorizontal: 10 }}
         />
         <NeonButton
           icon={Settings}
           size="small"
           color={THEME_COLORS.neonPink}
           onPress={() => {}}
+          style={{ marginHorizontal: 10 }}
         />
       </View>
     </Animated.View>
@@ -356,11 +389,12 @@ export default function App() {
         <Text style={styles.statValue}>{score}</Text>
       </View>
 
-      <View style={{ flexDirection: 'row', gap: 20, marginTop: 40 }}>
+      <View style={{ flexDirection: 'row', marginTop: 40 }}>
         <NeonButton
           icon={Home}
           onPress={() => setCurrentScreen('MENU')}
           color={THEME_COLORS.neonCyan}
+          style={{ marginRight: 20 }}
         />
         <NeonButton
           icon={RotateCcw}
@@ -373,13 +407,23 @@ export default function App() {
   );
 
   return (
-    <SafeAreaProvider>
+    <>
       <StatusBar barStyle="light-content" />
       <Background>
         {currentScreen === 'MENU' && renderMenu()}
         {currentScreen === 'GAME' && renderGame()}
         {currentScreen === 'GAMEOVER' && renderGameOver()}
       </Background>
+    </>
+  );
+}
+
+// --- ROOT: SafeAreaProvider burada, artık hata vermez ---
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <MainApp />
     </SafeAreaProvider>
   );
 }
@@ -404,7 +448,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   menuButtons: { alignItems: 'center', width: '100%' },
-  footer: { flexDirection: 'row', position: 'absolute', bottom: 50, gap: 20 },
+  footer: {
+    flexDirection: 'row',
+    position: 'absolute',
+    bottom: 50,
+  },
   button: {
     flexDirection: 'row',
     alignItems: 'center',

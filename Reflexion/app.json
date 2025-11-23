@@ -40,12 +40,13 @@
           "android": {
             "newArchEnabled": false,
             "usesCleartextTraffic": true,
-            "gradleVersion": "8.3",
-            "kotlinVersion": "1.9.22",
-            "compileSdkVersion": 34,
+            "gradleVersion": "8.10.2",
+            "kotlinVersion": "1.9.25",
+            "compileSdkVersion": 35,
             "targetSdkVersion": 34,
-            "buildToolsVersion": "34.0.0",
-            "minSdkVersion": 23
+            "buildToolsVersion": "35.0.0",
+            "minSdkVersion": 24,
+            "ndkVersion": "26.1.10909125"
           },
           "ios": {
             "newArchEnabled": false

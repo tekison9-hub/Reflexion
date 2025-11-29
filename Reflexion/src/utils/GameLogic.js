@@ -110,8 +110,13 @@ export const GAME_CONSTANTS = {
   
   // Target sizing - INCREASED FOR BETTER MOBILE UX
   TARGET_BASE_SIZE: 70, // Increased from 60 (44pt minimum for touch targets)
-  TARGET_MIN_SIZE: 50, // Increased from 40
-  TARGET_MAX_SIZE: 90, // Increased from 80
+  TARGET_MIN_SIZE: 55, // Increased from 50
+  TARGET_MAX_SIZE: 95, // Increased from 90
+  
+  // SIZING OPTIMIZED FOR TOUCH & SAFE MARGINS
+  SAFE_MARGIN_TOP: 120, // Critical for UI clearance
+  SAFE_MARGIN_BOTTOM: 100, 
+  SAFE_MARGIN_SIDES: 20,
   
   // Power Bar (Classic/Rush)
   POWER_BAR_FILL_PER_TAP: 10,
@@ -225,15 +230,20 @@ export function getLevelFromXP(totalXP) {
   let accumulatedXP = 0;
   
   // XP yeterli olduğu sürece level'i artır
-  while (accumulatedXP + getXPForNextLevel(level) <= totalXP) {
-    accumulatedXP += getXPForNextLevel(level);
-    level++;
-    
-    // Sonsuz döngü koruması
-    if (level > 1000) {
-      console.warn('⚠️ Level calculation exceeded 1000, capping');
+  // FIX: Check if we can progress to the NEXT level, not the current one
+  while (level <= 1000) {
+    const xpNeededForNextLevel = getXPForNextLevel(level);
+    if (accumulatedXP + xpNeededForNextLevel > totalXP) {
+      // Not enough XP to reach next level, current level is the result
       break;
     }
+    accumulatedXP += xpNeededForNextLevel;
+    level++;
+  }
+  
+  if (level > 1000) {
+    console.warn('⚠️ Level calculation exceeded 1000, capping');
+    return 1000;
   }
   
   return level;

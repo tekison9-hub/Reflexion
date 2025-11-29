@@ -21,7 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { SHOP_CATEGORIES, getCategoryItems } from '../data/ShopItems';
-import soundManager from '../services/SoundManager';
+import soundManager from '../services/SoundManager.js';
 import { getLevelFromXP } from '../utils/GameLogic';
 import { useGlobalState } from '../contexts/GlobalStateContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -31,7 +31,7 @@ export default function ShopScreen({ navigation }) {
   const { width } = useWindowDimensions();       // ✔ safe
   const itemWidth = useMemo(() => (width - 60) / 2, [width]);
 
-  const { playerData, spendCoins } = useGlobalState();
+  const { playerData, updatePlayerData } = useGlobalState();
   const { changeTheme } = useTheme(); // CRITICAL FIX: Use ThemeContext
 
   const [activeCategory, setActiveCategory] = useState(SHOP_CATEGORIES.THEMES);
@@ -119,16 +119,32 @@ export default function ShopScreen({ navigation }) {
   };
 
   const handlePurchase = async (item) => {
+    // 🔴 BUG #3 FIX: Validate item exists
+    if (!item) {
+      console.error('❌ Purchase failed: No item provided');
+      soundManager.play('error');
+      return;
+    }
+
+    // Check level requirement
     if (level < item.level) {
       soundManager.play('error');
       return Alert.alert('Level Required', `Reach level ${item.level} to unlock this item.`);
     }
 
+    // Check if already owned
+    if (unlockedItems.includes(item.id)) {
+      soundManager.play('error');
+      return Alert.alert('Already Owned', 'You already own this item.');
+    }
+
+    // Check if user has enough coins
     if (coins < item.price) {
       soundManager.play('error');
       return Alert.alert('Not Enough Coins', `You need ${item.price - coins} more coins.`);
     }
 
+    // 🔴 BUG #3 FIX: Complete purchase flow with proper error handling
     Alert.alert(
       'Confirm Purchase',
       `Buy "${item.name}" for ${item.price} coins?`,
@@ -137,11 +153,44 @@ export default function ShopScreen({ navigation }) {
         {
           text: 'Buy',
           onPress: async () => {
-            await spendCoins(item.price);
-            const updated = [...unlockedItems, item.id];
-            await saveUnlockedItems(updated);
-            soundManager.play('success');
-            setShowPreview(false);
+            try {
+              // 🔴 BUG #1 FIX: Direct state update instead of spendCoins
+              // Step 1: Check if user has enough coins
+              if (coins < item.price) {
+                throw new Error('Not enough coins');
+              }
+
+              // Step 2: Check if already owned
+              if (unlockedItems.includes(item.id)) {
+                throw new Error('Item already owned');
+              }
+
+              // Step 3: Deduct coins using updatePlayerData
+              const newCoins = coins - item.price;
+              const success = await updatePlayerData({ coins: newCoins });
+              if (!success) {
+                throw new Error('Failed to deduct coins');
+              }
+
+              // Step 4: Add item to owned items list
+              const updated = [...unlockedItems, item.id];
+              await saveUnlockedItems(updated);
+
+              // Step 5: Update UI state
+              setUnlockedItems(updated);
+
+              // Step 6: Play success sound
+              soundManager.play('success');
+
+              // Step 7: Close preview modal
+              setShowPreview(false);
+
+              console.log(`✅ Purchase successful: ${item.name} for ${item.price} coins`);
+            } catch (error) {
+              console.error('❌ Purchase failed:', error);
+              soundManager.play('error');
+              Alert.alert('Purchase Failed', error.message || 'An error occurred during purchase. Please try again.');
+            }
           },
         },
       ]

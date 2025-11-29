@@ -10,7 +10,7 @@ import {
 import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import soundManager from '../services/SoundManager';
+import soundManager from '../services/SoundManager.js';
 import theme from '../styles/theme';
 
 const {

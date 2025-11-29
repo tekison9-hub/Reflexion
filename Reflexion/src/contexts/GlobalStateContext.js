@@ -101,25 +101,39 @@ export const GlobalStateProvider = ({ children }) => {
   // ✅ Save fonksiyonu - direkt kaydet, normalize etme
   const savePlayerData = useCallback(async (updates) => {
     try {
-      // Mevcut data'yı al
-      const current = playerData || DEFAULT_PLAYER_DATA;
+      // CRITICAL FIX: Always read from storage first to get latest data (prevents race conditions)
+      let current = DEFAULT_PLAYER_DATA;
       
-      // Merge yap
+      try {
+        const stored = await AsyncStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          current = JSON.parse(stored);
+        } else {
+          // Fallback to state if storage is empty
+          current = playerData || DEFAULT_PLAYER_DATA;
+        }
+      } catch (e) {
+        console.warn('⚠️ Could not read from storage, using state:', e);
+        current = playerData || DEFAULT_PLAYER_DATA;
+      }
+      
+      // Merge updates
       const merged = { ...current, ...updates };
       
-      // totalXp varsa progress hesapla
+      // Calculate progression if totalXp exists
       if (typeof merged.totalXp === 'number') {
         const progress = getPlayerProgress(merged.totalXp);
         merged.level = progress.level;
         merged.currentXp = progress.currentXp;
         merged.xpToNextLevel = progress.xpToNextLevel;
-        merged.xp = progress.totalXp; // Backward compat
+        merged.xp = progress.totalXp;
       }
       
-      // Kaydet
+      // CRITICAL FIX: Await the save operation to ensure it completes before returning
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-      setPlayerData(merged);
       
+      // Update state after successful save
+      setPlayerData(merged);
       console.log('✅ Data saved:', {
         level: merged.level,
         totalXp: merged.totalXp,
@@ -134,14 +148,41 @@ export const GlobalStateProvider = ({ children }) => {
   }, [playerData]);
 
   const addXP = useCallback(async (amount) => {
-    if (typeof amount !== 'number' || amount <= 0) return false;
+    if (typeof amount !== 'number' || amount <= 0) {
+      console.warn('⚠️ Invalid XP amount:', amount);
+      return false;
+    }
     
-    const current = playerData || DEFAULT_PLAYER_DATA;
-    const newTotalXp = (current.totalXp || 0) + amount;
+    // CRITICAL FIX: Read from storage directly to get latest XP (prevents race conditions)
+    let currentTotalXp = 0;
+    try {
+      const stored = await AsyncStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        currentTotalXp = parsed.totalXp || parsed.xp || 0;
+      } else {
+        // Fallback to state if storage is empty
+        currentTotalXp = (playerData?.totalXp || playerData?.xp || 0);
+      }
+    } catch (e) {
+      console.warn('⚠️ Could not read XP from storage, using state:', e);
+      currentTotalXp = (playerData?.totalXp || playerData?.xp || 0);
+    }
     
-    console.log(`💎 Adding ${amount} XP: ${current.totalXp} → ${newTotalXp}`);
+    const newTotalXp = currentTotalXp + amount;
     
-    return await savePlayerData({ totalXp: newTotalXp });
+    console.log(`💎 Adding ${amount} XP: ${currentTotalXp} → ${newTotalXp}`);
+    
+    // CRITICAL FIX: Await the save to ensure it completes
+    const success = await savePlayerData({ totalXp: newTotalXp });
+    
+    if (success) {
+      console.log(`✅ XP successfully added. New total: ${newTotalXp}`);
+    } else {
+      console.error(`❌ Failed to save XP. Amount: ${amount}, Current: ${currentTotalXp}`);
+    }
+    
+    return success;
   }, [playerData, savePlayerData]);
 
   const addCoins = useCallback(async (amount) => {
@@ -163,8 +204,8 @@ export const GlobalStateProvider = ({ children }) => {
     return true;
   }, []);
 
-  if (isLoading) return null;
-
+  // CRITICAL FIX: Don't return null - always render provider to prevent black screen
+  // The children (MainApp) will handle showing loading screen if needed
   return (
     <GlobalStateContext.Provider value={{
       playerData: playerData || DEFAULT_PLAYER_DATA,

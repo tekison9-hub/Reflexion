@@ -11,14 +11,14 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect } from '../hooks/useFocusEffect';
 import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import leaderboardManager from '../services/LeaderboardManager';
 import { GAME_MODES } from '../utils/GameLogic';
-import soundManager from '../services/SoundManager';
+import soundManager from '../services/SoundManager.js';
 import theme from '../styles/theme';
 
 const { TYPOGRAPHY } = theme;
@@ -252,6 +252,10 @@ export default function LeaderboardScreen({ navigation }) {
                         {displayValue}
                       </Text>
                       <Text style={styles.statLabel}>{displayLabel}</Text>
+                      {/* 🔴 BUG #2 FIX: Display actual target count for Speed Test */}
+                      {isSpeedTest && entry.targetCount && (
+                        <Text style={styles.statSubLabel}>{entry.targetCount} targets</Text>
+                      )}
                     </View>
                     {!isSpeedTest && (
                       <>
@@ -431,6 +435,11 @@ const styles = createSafeStyleSheet({
   statLabel: {
     fontSize: 10,
     color: '#BDC3C7',
+  },
+  statSubLabel: {
+    fontSize: 9,
+    color: '#7F8C8D',
+    marginTop: 2,
   },
   statDivider: {
     width: 1,

@@ -29,7 +29,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import soundManager from '../services/SoundManager';
+import soundManager from '../services/SoundManager.js';
 
 // CRITICAL FIX: Get dimensions safely inside component, not at module level
 export default function BattleScreen({ navigation }) {

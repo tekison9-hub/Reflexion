@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
@@ -19,8 +20,10 @@
       "bundleIdentifier": "com.reflexion.game",
       "infoPlist": {
         "UIBackgroundModes": [
+          "audio",
           "audio"
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -38,7 +41,7 @@
         "expo-build-properties",
         {
           "android": {
-            "newArchEnabled": false,
+            "newArchEnabled": true,
             "usesCleartextTraffic": true,
             "gradleVersion": "8.10.2",
             "kotlinVersion": "1.9.25",
@@ -49,7 +52,7 @@
             "ndkVersion": "26.1.10909125"
           },
           "ios": {
-            "newArchEnabled": false
+            "newArchEnabled": true
           }
         }
       ],

@@ -64,16 +64,6 @@ export default function SettingsModal({ visible, onClose }) {
     try {
       if (musicManager && typeof musicManager.setEnabled === 'function') {
         await musicManager.setEnabled(value);
-        if (value) {
-          // Resume menu music if enabled
-          if (typeof musicManager.playMenuMusic === 'function') {
-            await musicManager.playMenuMusic();
-          }
-        } else {
-          if (typeof musicManager.stopAll === 'function') {
-            await musicManager.stopAll();
-          }
-        }
       }
     } catch (error) {
       console.warn('⚠️ Error toggling music:', error);

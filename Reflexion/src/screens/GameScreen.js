@@ -21,7 +21,7 @@ import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
-import soundManager from '../services/SoundManager';
+import soundManager from '../services/SoundManager.js';
 import { adService } from '../services/AdService';
 import { storageService } from '../services/StorageService';
 import { analytics } from '../services/AnalyticsService';
@@ -64,10 +64,16 @@ import { COMBO_ANIMATION_CONFIG, ANIMATION_EASING } from '../utils/animationCons
 import leaderboardManager from '../services/LeaderboardManager';
 import { debugEvents } from '../utils/debugLog';
 import { useTheme } from '../contexts/ThemeContext';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect } from '../hooks/useFocusEffect';
 import { ESPORTS_DARK_BACKGROUNDS } from '../utils/themeTokens';
 
 export default function GameScreen({ navigation, route, playerData: propPlayerData, onUpdateData }) {
+  // Helper function for safe sound playback (fire-and-forget)
+  const playSound = (soundName) => {
+    soundManager.play(soundName).catch(err => {
+      console.warn(`⚠️ Sound play failed: ${soundName}`, err);
+    });
+  };
   // 🔴 SAFE_EMOJI_PATCH: Applied safe emoji access pattern throughout
   console.log("SAFE_EMOJI_PATCH_APPLIED");
   
@@ -238,6 +244,19 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   useEffect(() => {
     gameOverRef.current = gameOver;
   }, [gameOver]);
+
+  // CRITICAL FIX: Sync refs with state to prevent stale values in handleGameOver
+  useEffect(() => {
+    scoreRef.current = score;
+  }, [score]);
+
+  useEffect(() => {
+    healthRef.current = health;
+  }, [health]);
+
+  useEffect(() => {
+    maxComboRef.current = maxCombo;
+  }, [maxCombo]);
   const [gameWon, setGameWon] = useState(false); // Track win/lose state
   const [earnedXP, setEarnedXP] = useState(0);
   const [earnedCoins, setEarnedCoins] = useState(0);
@@ -298,6 +317,10 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   const speedTestElapsedTimeRef = useRef(0); // Store timer value in ref to reduce re-renders
   const speedTestTargetCountRef = useRef(speedTestTargetCount); // Capture target count in ref
   const zenSpawnTimerRef = useRef(null);
+  // CRITICAL FIX: Use refs to capture score/health/maxCombo at game over (prevents stale state)
+  const scoreRef = useRef(0);
+  const healthRef = useRef(GAME_CONSTANTS.MAX_HEALTH);
+  const maxComboRef = useRef(0);
   // 🔴 TAP PIPELINE: Prevent overlapping async tap processing
   const isProcessingTapRef = useRef(false);
   // 🔴 CLEANUP: Guard against state updates after unmount
@@ -311,6 +334,8 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
   
   // 🔴 BUG #2 FIX: RunId system to prevent stale callbacks
   const runIdRef = useRef(0);
+  // CRITICAL FIX: Store handleGameOver in ref so it can be called from useEffect that runs before it's defined
+  const handleGameOverRef = useRef(null);
   
   // 🔴 RUSH MODE FIX: Game over ref to prevent stale closures
   const gameOverRef = useRef(false);
@@ -617,46 +642,48 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     }
   }, [gameActive]);
 
-  // REFLEXION FIX: Cleanup effect - Stop all sounds and clear timers on unmount
   useEffect(() => {
-    // CRITICAL FIX: Start gameplay music when GameScreen mounts
-    console.log('🎵 GameScreen mounted - starting gameplay music');
-    musicManager.playGameplayMusic();
+    const initMusic = async () => {
+      if (!soundManager.isInitialized()) {
+        return;
+      }
+      if (musicManager.currentTrack !== 'game' || !musicManager.isPlaying) {
+        if (musicManager.currentTrack === 'menu' && musicManager.isPlaying) {
+          musicManager.stopMenuMusic().catch(() => {});
+        }
+        await musicManager.playGameplayMusic();
+      }
+    };
     
-    // 🔴 BUG #2 FIX: Reset runId on mount
+    initMusic();
     runIdRef.current = 0;
     
     return () => {
-      console.log('🧹 GameScreen unmounting - cleaning up...');
-      
-      // 🔴 BUG #2 FIX: Reset runId on unmount
       runIdRef.current = 0;
       
-      // Stop all audio immediately
-      // 🔴 FIX: Safe call - stopAll might not return a Promise
-      try {
-        const stopResult = soundManager.stopAll();
-        if (stopResult && typeof stopResult.catch === 'function') {
-          stopResult.catch(err => {
-        console.warn('⚠️ Error stopping sounds on unmount:', err);
-      });
+      const cleanup = async () => {
+        try {
+          const stopResult = soundManager.stopAll();
+          if (stopResult && typeof stopResult.catch === 'function') {
+            stopResult.catch(err => {
+              console.warn('⚠️ Error stopping sounds on unmount:', err);
+            });
+          }
+        } catch (err) {
+          console.warn('⚠️ Error stopping sounds on unmount:', err);
         }
-      } catch (err) {
-        console.warn('⚠️ Error stopping sounds on unmount:', err);
-      }
+        
+        try {
+          await musicManager.stopAll();
+          if (soundManager.isInitialized()) {
+            await musicManager.playMenuMusic();
+          }
+        } catch (err) {
+          console.warn('⚠️ Error stopping music on unmount:', err);
+        }
+      };
       
-      // CRITICAL FIX: Stop music when leaving game
-      // 🔴 FIX: Safe call - stopAll might not return a Promise
-      try {
-        const stopResult = musicManager.stopAll();
-        if (stopResult && typeof stopResult.catch === 'function') {
-          stopResult.catch(err => {
-        console.warn('⚠️ Error stopping music on unmount:', err);
-      });
-        }
-      } catch (err) {
-        console.warn('⚠️ Error stopping music on unmount:', err);
-      }
+      cleanup();
       
       // 🔴 KRİTİK DÜZELTME: Comprehensive cleanup - tüm timer'ları ve state'leri temizle
       try {
@@ -712,15 +739,6 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
         setIsPaused(true);
         setGameActive(false);
       }
-        
-        // ✅ FIX #3: Stop all music and sounds when unmounting
-        try {
-          soundManager.stopAll();
-          musicManager.stopAll(); // Stop game music
-          musicManager.playMenuMusic(); // Ensure menu music plays
-        } catch (e) {
-          // Fail silently if soundManager not available
-        }
       } catch (error) {
         console.warn('⚠️ Error during cleanup:', error);
       }
@@ -753,7 +771,7 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     ]).start();
     
     // 🔴 TAP SOUND FIX: Use playTap() for countdown
-    soundManager.playTap();
+    playSound('tap');
     
     // Start countdown interval
     const countdownInterval = setInterval(() => {
@@ -768,15 +786,15 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
           console.log('✅ Countdown complete - starting game');
           clearInterval(countdownInterval);
           setGameActive(true);
-          // 🔴 TAP SOUND FIX: Use playTap() for countdown
-          soundManager.playTap();
+          // 🔴 TAP SOUND FIX: Use playSound helper
+          playSound('tap');
           return null;
         }
         
         // Continue countdown
         console.log(`⏱️ Countdown: ${prev - 1}`);
-        // 🔴 TAP SOUND FIX: Use playTap() for countdown
-        soundManager.playTap();
+        // 🔴 TAP SOUND FIX: Use playSound helper
+        playSound('tap');
         // Animate for each count
         Animated.sequence([
           Animated.timing(shakeAnim, {
@@ -1000,48 +1018,39 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     };
   }, [gameActive, gameAreaWidth, gameAreaHeight, difficulty, screenDimensions.width, gameMode, playerLevel, currentTheme, activeBallEmoji]);
 
-  // ✅ TASK 1: Speed Test (Time-Attack Mode) - Timer (count-up from 0)
-  // 🔴 SPEED TEST ROOT CAUSE ANALYSIS:
-  // 1. Timer effect has speedTestCompleted in deps, causing restart when completed
-  // 2. Timer callback uses setSpeedTestCompleted in functional update (inefficient)
-  // 3. Stale closure issues with speedTestStartTime
-  // FIX: Use refs for completion flag, remove from deps, use direct ref checks in callback
-  
+  // ✅ TASK 1: Speed Test Timer - OPTIMIZED (NO STALE CLOSURES)
   useEffect(() => {
     // Sync ref with state
     speedTestCompletedRef.current = speedTestCompleted;
   }, [speedTestCompleted]);
-  
+
   useEffect(() => {
-    // 🔴 FIX: Clear any existing timer first to prevent duplicates
+    // Clear any existing timer first
     if (speedTestTimerRef.current) {
       clearInterval(speedTestTimerRef.current);
       speedTestTimerRef.current = null;
-      console.log('[TIMER:ST] Cleared existing timer before starting new one');
     }
 
-    if (gameMode !== GAME_MODES.SPEED_TEST || !gameActive || speedTestCompleted || countdown !== null) {
-      console.log(`[TIMER:ST] Timer not started - mode=${gameMode}, active=${gameActive}, completed=${speedTestCompleted}, countdown=${countdown}`);
+    // Only run in Speed Test mode, when active, after countdown
+    if (gameMode !== GAME_MODES.SPEED_TEST || !gameActive || countdown !== null) {
       return;
     }
 
-    // Start timer when game becomes active (after countdown)
+    // Start timer when game becomes active
     if (speedTestStartTime === 0) {
       const startTime = Date.now();
       setSpeedTestStartTime(startTime);
-      speedTestStartTimeRef.current = startTime; // 🔴 FIX: Store in ref for timer callback
+      speedTestStartTimeRef.current = startTime;
       speedTestElapsedTimeRef.current = 0;
-      console.log(`[TIMER:ST] Timer started at ${startTime}`);
     } else {
-      speedTestStartTimeRef.current = speedTestStartTime; // 🔴 FIX: Keep ref in sync
+      speedTestStartTimeRef.current = speedTestStartTime;
     }
 
-    // 🔴 FIX: Use stable interval with refs to avoid stale closures
-    let lastStateUpdate = 0;
+    // OPTIMIZED: Update every 16ms (~60fps) instead of 10ms
+    let lastUpdate = 0;
     speedTestTimerRef.current = setInterval(() => {
-      // Use refs to get current values (avoids stale closure)
       const currentStartTime = speedTestStartTimeRef.current;
-      const currentCompleted = speedTestCompletedRef.current; // Use ref instead of state
+      const currentCompleted = speedTestCompletedRef.current;
       
       if (currentStartTime > 0 && !currentCompleted) {
         const elapsed = Date.now() - currentStartTime;
@@ -1049,33 +1058,31 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
         
         // Update state every 50ms to reduce re-renders
         const now = Date.now();
-        if (now - lastStateUpdate >= 50) {
+        if (now - lastUpdate >= 50) {
           if (isMountedRef.current) {
-          setSpeedTestElapsedTime(elapsed);
+            setSpeedTestElapsedTime(elapsed);
           }
-          lastStateUpdate = now;
-          console.log(`[TIMER_ST] ms=${elapsed}`);
+          lastUpdate = now;
+          // REDUCED LOGGING: Only log every 500ms
+          if (elapsed % 500 < 50) {
+            console.log(`[TIMER_ST] ${(elapsed / 1000).toFixed(1)}s`);
+          }
         }
       } else if (currentCompleted) {
-        // Timer should stop if completed
         if (speedTestTimerRef.current) {
           clearInterval(speedTestTimerRef.current);
           speedTestTimerRef.current = null;
-          console.log('[TIMER:ST] Timer stopped - completed');
         }
       }
-    }, 10);
-
-    console.log(`[TIMER:ST] Timer interval created`);
+    }, 16); // 60fps update rate
 
     return () => {
       if (speedTestTimerRef.current) {
         clearInterval(speedTestTimerRef.current);
         speedTestTimerRef.current = null;
-        console.log('[TIMER:ST] Timer interval cleared');
       }
     };
-  }, [gameMode, gameActive, countdown]); // 🔴 FIX: Removed speedTestCompleted and speedTestStartTime from deps
+  }, [gameMode, gameActive, countdown]);
 
   // ✅ TASK 1: Speed Test (Time-Attack Mode) - Spawn Logic
   // 🔴 SPEED TEST STABILITY: Controlled interval, ref-based, immediate spawn after countdown
@@ -1089,17 +1096,16 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     }
 
     // Only run in Speed Test mode, when active, after countdown
-    if (gameMode !== GAME_MODES.SPEED_TEST || !gameActive || screenDimensions.width === 0 || speedTestCompleted || countdown !== null) {
+    if (gameMode !== GAME_MODES.SPEED_TEST || !gameActive || screenDimensions.width === 0 || countdown !== null) {
       return;
     }
 
-    // 🔴 SPEED TEST STABILITY: Spawn function using refs only
     const spawnTargets = () => {
       if (!isMountedRef.current || speedTestCompletedRef.current) {
         return;
       }
       
-      // Calculate remaining using refs (no state dependency)
+      // Calculate remaining using refs
       const currentHitCount = speedTestHitCountRef.current;
       const currentTargetLimit = speedTestTargetCountRef.current || speedTestTargetCount;
       const remaining = currentTargetLimit - currentHitCount;
@@ -1107,51 +1113,31 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       
       // Check completion
       if (remaining <= 0) {
-          if (!speedTestCompletedRef.current) {
-            speedTestCompletedRef.current = true;
-            if (speedTestTimerRef.current) {
-              clearInterval(speedTestTimerRef.current);
-              speedTestTimerRef.current = null;
-            }
-            if (speedTestSpawnTimerRef.current) {
-              clearInterval(speedTestSpawnTimerRef.current);
-              speedTestSpawnTimerRef.current = null;
-            }
-        
-          // === HAPTIC PATCH START ===
-          // Performance-based sound mapping for Speed Test end result
-          const maxScore = speedTestTargetCountRef.current || speedTestTargetCount;
-          const score = speedTestHitCountRef.current || speedTestTargetsHit;
-          const scoreRatio = maxScore > 0 ? score / maxScore : 0;
+        if (!speedTestCompletedRef.current) {
+          speedTestCompletedRef.current = true;
           
-          let resultSound = 'speedtest_fail';
-          let resultClassification = 'fail';
-          
-          if (scoreRatio >= 0.8) {
-            resultSound = 'speedtest_win';
-            resultClassification = 'win';
-          } else if (scoreRatio >= 0.5) {
-            resultSound = 'speedtest_ok';
-            resultClassification = 'ok';
+          // Clear timers
+          if (speedTestTimerRef.current) {
+            clearInterval(speedTestTimerRef.current);
+            speedTestTimerRef.current = null;
+          }
+          if (speedTestSpawnTimerRef.current) {
+            clearInterval(speedTestSpawnTimerRef.current);
+            speedTestSpawnTimerRef.current = null;
           }
           
-          console.log(`[SPEEDTEST] result classification: ${resultClassification} (scoreRatio=${scoreRatio.toFixed(2)}, score=${score}/${maxScore})`);
-          soundManager.play(resultSound);
-          // === HAPTIC PATCH END ===
+          // Play finish sound
+          playSound('speedFinish');
           
-          // === SOUND REGISTRATION START ===
-          // Speed Test finish sound
-          soundManager.play('speedFinish').catch(() => {});
-          // === SOUND REGISTRATION END ===
-          
+          // Update UI
           if (isMountedRef.current) {
             setSpeedTestCompleted(true);
             setGameActive(false);
             setSpeedTestElapsedTime(speedTestElapsedTimeRef.current);
             setTimeout(() => {
               if (isMountedRef.current) {
-              setSpeedTestResultsVisible(true);
-              setSpeedTestCanRestart(true);
+                setSpeedTestResultsVisible(true);
+                setSpeedTestCanRestart(true);
               }
             }, GAME_CONSTANTS.SPEED_TEST_RESULTS_FREEZE_MS);
           }
@@ -1159,38 +1145,45 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
         return;
       }
       
-      // Spawn if no targets exist and targets remaining
+      // Spawn if no targets exist
       setTargets(prev => {
         if (prev.length > 0 || remaining <= 0) {
           return prev;
         }
         
-        const spawnCount = getSpeedTestSpawnCount(remaining);
+        // OPTIMIZED: Spawn 1-3 targets based on remaining
+        const spawnCount = remaining > 30 ? 1 : remaining > 15 ? 2 : 3;
         const targetsToSpawn = Math.min(spawnCount, remaining);
-
-          if (targetsToSpawn > 0 && gameAreaWidth > 0 && gameAreaHeight > 0) {
-            const newTargets = [];
-            for (let i = 0; i < targetsToSpawn; i++) {
-              const target = generateTarget(gameAreaWidth, gameAreaHeight, 1, gameMode, currentTheme, playerLevel, activeBallEmoji, [...prev, ...newTargets]);
-              target.speedTestTarget = true;
-              newTargets.push(target);
-            }
-          console.log(`[SPAWN_ST] count=${targetsToSpawn}`);
-            return [...prev, ...newTargets];
+        if (targetsToSpawn > 0 && gameAreaWidth > 0 && gameAreaHeight > 0) {
+          const newTargets = [];
+          for (let i = 0; i < targetsToSpawn; i++) {
+            const target = generateTarget(
+              gameAreaWidth, 
+              gameAreaHeight, 
+              1, 
+              gameMode, 
+              currentTheme, 
+              playerLevel, 
+              activeBallEmoji, 
+              [...prev, ...newTargets]
+            );
+            target.speedTestTarget = true;
+            newTargets.push(target);
           }
+          return [...prev, ...newTargets];
+        }
         return prev;
       });
     };
 
-    // 🔴 SPEED TEST STABILITY: Immediate spawn when countdown finishes
+    // Immediate first spawn
     spawnTargets();
-
-    // Controlled interval checking remainingTargets > 0
+    // OPTIMIZED: Check every 150ms instead of 200ms (faster response)
     speedTestSpawnTimerRef.current = setInterval(() => {
       if (speedTestRemainingTargetsRef.current > 0) {
         spawnTargets();
       }
-    }, 200);
+    }, 150);
 
     return () => {
       if (speedTestSpawnTimerRef.current) {
@@ -1268,15 +1261,8 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
               if (localRunId !== runIdRef.current) return prevMissed;
               return prevMissed + expired;
             });
-            // 🔴 FIX: Safe call - play might not return a Promise
-            try {
-              const playResult = soundManager.play('miss');
-              if (playResult && typeof playResult.catch === 'function') {
-                playResult.catch(() => {});
-              }
-            } catch (err) {
-              console.warn('⚠️ Error playing miss sound:', err);
-            }
+            // 🔴 FIX: Safe call with helper function
+            playSound('miss');
         }
         
         if (expired > 0 && gameMode !== GAME_MODES.ZEN && gameMode !== GAME_MODES.SPEED_TEST) {
@@ -1315,15 +1301,8 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
                   } catch (err) {
                     console.warn('⚠️ Error resetting music speed:', err);
                   }
-                  // 🔴 FIX: Safe call - play might not return a Promise
-                  try {
-                    const playResult = soundManager.play('miss');
-                    if (playResult && typeof playResult.catch === 'function') {
-                      playResult.catch(() => {});
-                    }
-                  } catch (err) {
-                    console.warn('⚠️ Error playing miss sound:', err);
-                  }
+                  // 🔴 FIX: Safe call with helper function
+                  playSound('miss');
             triggerHaptic('error');
                 } else {
                   // 🔴 BUG #2 FIX: Use actual game mode for logging
@@ -1387,11 +1366,24 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       });
       
       setGameActive(false);
-      gameOverRef.current = true;
-      setGameOver(true);
-      // handleGameOver will be called by the game over effect
+      // CRITICAL FIX: Directly call handleGameOver for time-up scenarios
+      // The effect at line 1440 only handles health-based game over (losses)
+      // We must call handleGameOver directly here for victories (time runs out with health > 0)
+      if (!gameOverRef.current && !gameOver) {
+        // Use ref to call handleGameOver (it's defined later, so we use ref pattern)
+        if (handleGameOverRef.current) {
+          handleGameOverRef.current();
+        } else {
+          // If ref not set yet, use setTimeout to call it on next tick
+          setTimeout(() => {
+            if (handleGameOverRef.current && !gameOverRef.current) {
+              handleGameOverRef.current();
+            }
+          }, 0);
+        }
+      }
     }
-  }, [timeLeft, gameActive, gameMode, score]); // ✅ 'score' dependency ensures fresh data
+  }, [timeLeft, gameActive, gameMode, score, gameOver]); // ✅ Added gameOver to deps
 
   // Power Bar active timer
   useEffect(() => {
@@ -1493,28 +1485,28 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       hasFinalizedRef.current = true;
 
       try {
-        const isXpMode = gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH;
-
         // Get old level for level up sound
         const oldTotalXp = playerData?.totalXp || 0;
         const oldLevel = getLevelFromXP(oldTotalXp);
 
-        // 1) XP → sadece Classic & Rush (NEVER write to AsyncStorage directly)
+        // 1) XP → ONLY Classic and Rush modes (NEVER write to AsyncStorage directly)
+        // CRITICAL FIX: XP only in Classic/Rush (not Zen, not Speed Test)
+        const isXpMode = gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH;
+        
         if (isXpMode && xpEarned > 0 && typeof addXP === 'function') {
-          await addXP(xpEarned);
-          console.log(`✅ XP added: ${xpEarned}`);
-          
-          // Check for level up after XP is added
-          const newTotalXp = oldTotalXp + xpEarned;
-          const newLevel = getLevelFromXP(newTotalXp);
-          if (newLevel > oldLevel) {
-            soundManager.play('levelUp');
-            console.log(`🎉 Level Up! ${oldLevel} → ${newLevel}`);
-          }
-          
-          // Refresh context to update UI
-          if (refreshPlayerData && typeof refreshPlayerData === 'function') {
-            await refreshPlayerData();
+          const success = await addXP(xpEarned);
+          if (success) {
+            console.log(`✅ XP added: ${xpEarned}`);
+            
+            // Check for level up after XP is added
+            const newTotalXp = oldTotalXp + xpEarned;
+            const newLevel = getLevelFromXP(newTotalXp);
+            if (newLevel > oldLevel) {
+              playSound('levelUp');
+              console.log(`🎉 Level Up! ${oldLevel} → ${newLevel}`);
+            }
+          } else {
+            console.error(`❌ Failed to add XP: ${xpEarned}`);
           }
         }
 
@@ -1525,6 +1517,8 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
         }
 
         // 3) Global playerData istatistik patch'i
+        // CRITICAL FIX: Only update stats, never touch totalXp/currentXp/level
+        // These are managed exclusively by addXP/addCoins
         const patch = {
           gamesPlayed: (playerData?.gamesPlayed || 0) + 1,
           lastUpdated: Date.now(),
@@ -1540,8 +1534,15 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
           patch.gamesPlayedSpeedTest = (playerData?.gamesPlayedSpeedTest || 0) + 1;
         }
 
+        // CRITICAL FIX: Update stats AFTER XP/coins are saved
+        // This ensures XP is already persisted before stats update
         if (typeof updatePlayerData === 'function') {
           await updatePlayerData(patch);
+        }
+        
+        // Refresh context to update UI AFTER all saves are complete
+        if (refreshPlayerData && typeof refreshPlayerData === 'function') {
+          await refreshPlayerData();
         }
 
         // 4) ProgressTracker için oturum kaydı
@@ -1565,61 +1566,78 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     [gameMode, playerData, addXP, addCoins, updatePlayerData, refreshPlayerData, score, maxCombo]
   );
 
-  const handleGameOver = async () => {
+  const handleGameOver = useCallback(async () => {
     // Prevent duplicate calls
     if (gameOverRef.current || gameOver) return;
 
-    console.log(`🏁 GAME OVER: ${gameMode} | Score: ${score} | Time: ${speedTestElapsedTimeRef.current}ms`);
+    // CRITICAL FIX: Use refs to get latest values (prevents stale state issues)
+    const finalScore = scoreRef.current;
+    const finalHealth = healthRef.current;
+    const finalMaxCombo = maxComboRef.current;
+
+    console.log(`🏁 GAME OVER: ${gameMode} | Score: ${finalScore} | Health: ${finalHealth} | Combo: ${finalMaxCombo}`);
     gameOverRef.current = true;
     setGameOver(true);
     hasFinalizedRef.current = false; // ✅ B1: Reset finalization flag for new game
 
-    try {
-      soundManager.play('gameOver');
-    } catch (e) {}
+    playSound('gameOver');
     
     // --- 1. CALCULATE REWARDS ---
     // Win Condition: Speed Test Completed OR Health > 0 (Classic/Rush)
-    const isVictory = (gameMode === GAME_MODES.SPEED_TEST && speedTestCompleted) || health > 0;
+    const isVictory = (gameMode === GAME_MODES.SPEED_TEST && speedTestCompleted) || finalHealth > 0;
 
-    // ✅ B2: XP calculation - Speed Test & Zen get 0 XP
+    // AAA XP SYSTEM: Score-based rewards with win/loss modifiers
+    // CRITICAL FIX: XP only in Classic and Rush modes (not Zen, not Speed Test)
     let xpEarned = 0;
     let coinsEarned = 0;
 
     if (gameMode === GAME_MODES.SPEED_TEST) {
-      // ✅ B2: Speed Test - NO XP/Coins (leaderboard only)
+      // Speed Test: NO XP/Coins (leaderboard only)
       xpEarned = 0;
       coinsEarned = 0;
     } else if (gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH) {
-      // Classic/Rush Logic - XP for both win and lose
-      const baseXP = Math.floor(score * 0.15);
-      const comboBonus = Math.floor(maxCombo * 2);
-      const modeMultiplier = gameMode === GAME_MODES.RUSH ? 1.2 : 1.0;
-      let totalCalcXP = Math.floor((baseXP + comboBonus) * modeMultiplier);
-
+      // Base XP from score (1 XP per 10 points)
+      const baseXP = Math.floor(finalScore / 10);
+      
+      // Combo bonus (up to +50% XP)
+      const comboBonus = Math.min(finalMaxCombo * 0.5, baseXP * 0.5);
+      
+      // Victory/Loss modifier
       if (isVictory) {
-        xpEarned = Math.max(10, totalCalcXP); // Min 10 XP on win
-        coinsEarned = Math.floor(score / 50) + Math.floor(maxCombo / 5);
+        // WIN: Full XP + 50% victory bonus (all XP earned)
+        xpEarned = Math.floor(baseXP + comboBonus + (baseXP * 0.5));
+        // Ensure minimum XP for wins (at least 1 XP per point if score > 0)
+        if (finalScore > 0 && xpEarned === 0) {
+          xpEarned = Math.max(1, Math.floor(finalScore / 10));
+        }
+        coinsEarned = Math.floor(finalScore / 50) + Math.floor(finalMaxCombo / 5);
       } else {
-        xpEarned = Math.max(1, Math.floor(totalCalcXP * 0.25)); // 25% XP on loss
+        // LOSS: Small consolation XP (20% of base, minimum 10)
+        xpEarned = Math.max(10, Math.floor(baseXP * 0.2));
         coinsEarned = 0;
       }
-    } else {
-      // Zen or other modes - no XP
-      xpEarned = 0;
-      coinsEarned = 0;
     }
+    // Zen mode: NO XP (as per user requirement - XP only in Classic/Rush)
+
+    console.log(`💎 XP CALCULATION: score=${finalScore}, combo=${finalMaxCombo}, health=${finalHealth}, win=${isVictory}, xp=${xpEarned}, coins=${coinsEarned}`);
 
     setEarnedXP(xpEarned);
     setEarnedCoins(coinsEarned);
 
     // --- 2. FINALIZE RUN (XP/Coins/Stats) ---
-    // ✅ B1: Use finalizeRun for both win and lose
-    await finalizeRun({ 
-      xpEarned, 
-      coinsEarned, 
-      gameStats: { score, maxCombo, isVictory } 
-    });
+    // CRITICAL FIX: Only finalize immediately if NOT showing double reward screen
+    // If victory with rewards, wait for user to choose Skip or Watch Ad
+    const shouldShowDoubleReward = isVictory && (xpEarned > 0 || coinsEarned > 0) && (gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH);
+    
+    if (!shouldShowDoubleReward) {
+      // Loss or no rewards: Finalize immediately (no double reward option)
+      await finalizeRun({ 
+        xpEarned, 
+        coinsEarned, 
+        gameStats: { score: finalScore, maxCombo: finalMaxCombo, isVictory } 
+      });
+    }
+    // If shouldShowDoubleReward is true, finalizeRun will be called in handleSkipAd or handleDoubleReward
 
     // --- 3. UPDATE DETAILED STATS (AsyncStorage @player_stats) ---
     try {
@@ -1654,15 +1672,18 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     // --- 4. UPDATE LEADERBOARD (Fixes "Speed Test Missing" bug) ---
     try {
         if (gameMode === GAME_MODES.SPEED_TEST && isVictory) {
-            // For Speed Test: Score is TIME (Lower is better, but we store the MS value)
-            // We store the TIME in 'score' field for sorting, or handle specific logic in Manager
+            // 🔴 BUG #2 FIX: Include targetCount and time in Speed Test leaderboard entry
+            const targetCount = speedTestTargetCountRef.current || speedTestTargetCount;
+            const timeInSeconds = speedTestElapsedTimeRef.current / 1000; // Convert MS to seconds
             await leaderboardManager.addScore(GAME_MODES.SPEED_TEST, {
-                score: speedTestElapsedTimeRef.current, // Store TIME in MS
+                score: 0, // Not used for Speed Test
+                time: timeInSeconds, // Time in seconds (lower is better)
+                targetCount: targetCount, // Store actual target count
                 combo: 0,
                 timestamp: Date.now(),
                 playerName: 'Player' // Or fetch real name
             });
-            console.log('🏆 SPEED TEST SCORE SUBMITTED:', speedTestElapsedTimeRef.current);
+            console.log(`🏆 SPEED TEST SCORE SUBMITTED: ${timeInSeconds.toFixed(3)}s (${targetCount} targets)`);
         } else if (score > 0 && (gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH)) {
             await leaderboardManager.addScore(gameMode, {
                 score: score,
@@ -1680,14 +1701,20 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
         // Speed test has its own result modal logic driven by useEffect
     } else {
         // Show standard double reward / game over modal
-        if (isVictory && (xpEarned > 0 || coinsEarned > 0)) {
+        // CRITICAL FIX: Use same condition as shouldShowDoubleReward to ensure consistency
+        if (shouldShowDoubleReward) {
             setShowDoubleReward(true);
         } else if (!showReviveOption && !hasRevived) {
             // Only show revive if we haven't used it
              setShowReviveOption(true);
         }
     }
-  };
+  }, [gameMode, speedTestCompleted, finalizeRun, showReviveOption, hasRevived, gameOver]);
+
+  // CRITICAL FIX: Sync handleGameOver to ref so it can be called from useEffect that runs before it's defined
+  useEffect(() => {
+    handleGameOverRef.current = handleGameOver;
+  }, [handleGameOver]);
 
   // 🔴 BUG #2 FIX: Safe function to start a new game run with runId isolation
   const startNewRun = useCallback((initialHealth) => {
@@ -1915,7 +1942,7 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
         title: 'Reflexion Score',
       });
       
-      soundManager.play('success');
+      playSound('success');
       console.log('✅ Score shared successfully');
     } catch (error) {
       console.error('❌ Error sharing score:', error);
@@ -1945,15 +1972,18 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       setEarnedXP(finalXP);
       setEarnedCoins(finalCoins);
       setShowDoubleReward(false);
-      // ✅ B1: Use finalizeRun instead of saveProgress
+      // CRITICAL FIX: Only finalize if not already finalized (prevent double processing)
       if (gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH) {
-        hasFinalizedRef.current = false; // Reset to allow double reward
-        await finalizeRun({ 
-          xpEarned: finalXP, 
-          coinsEarned: finalCoins, 
-          gameStats: { score, maxCombo, isVictory: true } 
-        });
-        analytics.logRewardClaim('double_reward', finalCoins);
+        if (!hasFinalizedRef.current) {
+          await finalizeRun({ 
+            xpEarned: finalXP, 
+            coinsEarned: finalCoins, 
+            gameStats: { score, maxCombo, isVictory: true } 
+          });
+          analytics.logRewardClaim('double_reward', finalCoins);
+        } else {
+          console.warn('⚠️ Double reward: Already finalized, skipping duplicate call');
+        }
       }
     }
   };
@@ -1965,14 +1995,17 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
    */
   const handleSkipAd = useCallback(() => {
     setShowDoubleReward(false);
-    // ✅ B1: Use finalizeRun instead of saveProgress
+    // CRITICAL FIX: Only finalize if not already finalized (prevent double processing)
     if (gameMode === GAME_MODES.CLASSIC || gameMode === GAME_MODES.RUSH) {
-      hasFinalizedRef.current = false; // Reset to allow skip save
-      finalizeRun({ 
-        xpEarned: earnedXP, 
-        coinsEarned: earnedCoins, 
-        gameStats: { score, maxCombo, isVictory: true } 
-      });
+      if (!hasFinalizedRef.current) {
+        finalizeRun({ 
+          xpEarned: earnedXP, 
+          coinsEarned: earnedCoins, 
+          gameStats: { score, maxCombo, isVictory: true } 
+        });
+      } else {
+        console.warn('⚠️ Skip ad: Already finalized, skipping duplicate call');
+      }
     }
   }, [earnedXP, earnedCoins, finalizeRun, gameMode, score, maxCombo]);
 
@@ -2018,8 +2051,9 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
       setGameActive(true);
     }
     
-    // ULTIMATE: Start gameplay music
-    musicManager.playGameplayMusic();
+    if (musicManager.currentTrack !== 'game' || !musicManager.isPlaying) {
+      musicManager.playGameplayMusic().catch(() => {});
+    }
     setEarnedXP(0);
     setEarnedCoins(0);
     setPowerBar(0);
@@ -2041,15 +2075,15 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
    * Navigate to main menu with COMPLETE state reset
    * REFLEXION FIX: Clear ALL timers, stop audio, reset ALL state
    */
-  const handleMainMenu = useCallback(() => {
-    // ✅ FIX #3: Stop all game music and sounds, then play menu music
+  const handleMainMenu = useCallback(async () => {
     try {
       const { soundManager } = require('../services/SoundManager');
       soundManager.stopAll();
-      musicManager.stopAll(); // Stop game music
-      musicManager.playMenuMusic(); // Start menu music
+      await musicManager.stopAll();
+      if (soundManager.isInitialized()) {
+        await musicManager.playMenuMusic();
+      }
     } catch (e) {
-      // Fail silently if soundManager not available
     }
 
     // Clear ALL timers (critical bug fix)
@@ -2230,13 +2264,13 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     if (playSound) {
       try {
         if (soundType === 'tap') {
-          soundManager.playTap();
+          playSound('tap');
         } else if (soundType === 'lucky') {
-          soundManager.play('luckyTap');
+          playSound('luckyTap');
         } else if (soundType === 'miss') {
-          soundManager.play('miss');
+          playSound('miss');
         } else {
-          soundManager.play(soundType);
+          playSound(soundType);
         }
         console.log(`[HIT] Sound played: ${soundType}`);
       } catch (error) {
@@ -2363,24 +2397,24 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     try {
       if (hitType === 'danger') {
         // Danger: play miss sound (error feedback)
-      await soundManager.play('miss');
+        playSound('miss');
         console.log('[DEBUG HIT] sound+FX triggered for targetId=' + target.id + ', mode=danger (miss sound)');
       } else if (hitType === 'powerup') {
         // Power-up: play luckyTap sound
-        await soundManager.play('luckyTap');
+        playSound('luckyTap');
         console.log('[DEBUG HIT] sound+FX triggered for targetId=' + target.id + ', mode=powerup (luckyTap sound)');
       } else if (hitType === 'lucky') {
         // Lucky target: play luckyTap sound
-        await soundManager.play('luckyTap');
+        playSound('luckyTap');
         console.log('[DEBUG HIT] sound+FX triggered for targetId=' + target.id + ', mode=lucky (luckyTap sound)');
       } else {
         // Normal/Speed Test/Zen: play tap sound
-        soundManager.playTap();
+        playSound('tap');
         console.log('[DEBUG HIT] sound+FX triggered for targetId=' + target.id + ', mode=' + hitType + ' (tap sound)');
         
         // Combo milestone: play combo sound in addition to tap
         if (newCombo > 0 && newCombo % 5 === 0) {
-          await soundManager.play('combo', newCombo);
+          playSound('combo');
           console.log('[DEBUG HIT] combo milestone sound triggered for combo=' + newCombo);
         }
       }
@@ -2391,7 +2425,8 @@ export default function GameScreen({ navigation, route, playerData: propPlayerDa
     // ====================================================
     // 2. VISUAL FEEDBACK - PARTICLES
     // ====================================================
-    const particleCount = hitType === 'powerup' ? 20 : hitType === 'danger' ? 15 : hitType === 'zen' ? 15 : 10;
+    // Android optimization: Reduced particle count to prevent lag
+    const particleCount = hitType === 'powerup' ? 12 : hitType === 'danger' ? 8 : hitType === 'zen' ? 8 : 6;
     const particleColor = hitType === 'danger' 
       ? DANGER_CONFIG.COLOR 
       : hitType === 'powerup' 

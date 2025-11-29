@@ -8,11 +8,16 @@
     },
     "development": {
       "android": { "buildType": "apk" }
+    },
+    "dev": {
+      "developmentClient": true,
+      "distribution": "internal"
     }
   },
   "cli": {
     "version": ">= 3.23.0"
   }
 }
+
 
 

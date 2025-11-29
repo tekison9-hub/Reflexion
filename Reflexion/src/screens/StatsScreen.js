@@ -4,7 +4,7 @@
  * Major value-add feature for market sale ($2,000-$3,000)
  */
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,14 +12,14 @@ import {
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect } from '../hooks/useFocusEffect';
 import { createSafeStyleSheet } from '../utils/safeStyleSheet';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLevelFromXP } from '../utils/GameLogic';
-import soundManager from '../services/SoundManager';
+import soundManager from '../services/SoundManager.js';
 import theme from '../styles/theme';
 import { useGlobalState } from '../contexts/GlobalStateContext';
 
@@ -62,13 +62,38 @@ export default function StatsScreen({ navigation }) {
 
   const isLoadingRef = useRef(false); // ✅ Loading guard
 
-  // ✅ FIX #4: useFocusEffect - Fixed loading stuck issue with proper error handling
+  // AAA FIX: Reactively update stats when playerData changes
+  useEffect(() => {
+    if (!isInitialized || !playerData) return;
+    
+    // Recalculate stats when playerData changes
+    const updateStats = async () => {
+      try {
+        const statsData = await AsyncStorage.getItem('@player_stats');
+        const parsedStats = statsData ? JSON.parse(statsData) : {};
+        
+        setStats(prevStats => ({
+          ...prevStats,
+          gamesPlayed: playerData.gamesPlayed || 0,
+          totalXP: playerData.totalXp || 0,
+          totalCoins: playerData.coins || 0,
+          maxCombo: parsedStats.maxCombo || playerData.maxCombo || prevStats.maxCombo,
+        }));
+      } catch (error) {
+        console.warn('⚠️ Stats reactive update error:', error);
+      }
+    };
+    
+    updateStats();
+  }, [playerData?.totalXp, playerData?.coins, playerData?.gamesPlayed, isInitialized]);
+
+  // ✅ BUG #5 FIX: useFocusEffect with proper dependency management
   useFocusEffect(
     useCallback(() => {
       let isMounted = true;
       
       const loadStats = async () => {
-        // ✅ Guard: Zaten loading ise tekrar çalıştırma
+        // Guard: Already loading
         if (isLoadingRef.current) {
           console.log('⏸️ Stats already loading, skipping...');
           return;
@@ -80,27 +105,27 @@ export default function StatsScreen({ navigation }) {
           if (!isMounted) return;
           setLoading(true);
           
-          // 1. Context'i yenile (sadece 1 kez)
+          // 1. Refresh context ONCE
           if (refreshPlayerData && typeof refreshPlayerData === 'function') {
             await refreshPlayerData();
           }
           
-          // 2. Player data'yı al (context'ten güncel)
+          // 2. Get current player data (from context)
           const currentData = playerData || {};
           
-          // 3. Stats data'yı al (AsyncStorage'dan) - ✅ FIX #4: Add fallback defaults
+          // 3. Load stats from AsyncStorage with fallback
           let parsedStats = {};
           try {
             const statsData = await AsyncStorage.getItem('@player_stats');
             parsedStats = statsData ? JSON.parse(statsData) : {};
           } catch (storageError) {
-            console.warn('⚠️ Stats storage read error, using defaults:', storageError);
-            parsedStats = {}; // Use empty object as fallback
+            console.warn('⚠️ Stats storage read error:', storageError);
+            parsedStats = {};
           }
           
           if (!isMounted) return;
           
-          // 4. State'i güncelle - ✅ FIX #4: Always set with fallback defaults
+          // 4. Update state with fallback defaults
           setStats({
             gamesPlayed: currentData.gamesPlayed || 0,
             totalXP: currentData.totalXp || 0,
@@ -114,6 +139,7 @@ export default function StatsScreen({ navigation }) {
             averageAccuracy: parsedStats.averageAccuracy || 0,
             perfectGames: parsedStats.perfectGames || 0,
             totalTaps: parsedStats.totalTaps || 0,
+            // FIX: Ensure per-mode stats are loaded
             gamesPlayedClassic: parsedStats.gamesPlayedClassic || 0,
             gamesPlayedRush: parsedStats.gamesPlayedRush || 0,
             gamesPlayedZen: parsedStats.gamesPlayedZen || 0,
@@ -128,7 +154,7 @@ export default function StatsScreen({ navigation }) {
           
         } catch (error) {
           console.error('❌ Stats load error:', error);
-          // ✅ FIX #4: Set default stats even on error
+          // Set default stats on error
           if (isMounted) {
             setStats({
               gamesPlayed: 0,
@@ -150,7 +176,7 @@ export default function StatsScreen({ navigation }) {
             });
           }
         } finally {
-          // ✅ FIX #4: ALWAYS set loading to false in finally block
+          // ALWAYS set loading to false
           if (isMounted) {
             setLoading(false);
           }
@@ -164,9 +190,8 @@ export default function StatsScreen({ navigation }) {
       return () => {
         isMounted = false;
         isLoadingRef.current = false;
-        setLoading(false); // ✅ FIX #4: Ensure loading is reset on unmount
       };
-    }, []) // ✅ FIX #4: Empty deps - only run on focus, not on playerData changes
+    }, [refreshPlayerData, playerData?.totalXp, playerData?.gamesPlayed]) // CRITICAL: Add deps
   );
 
   const formatTime = (seconds) => {
@@ -299,7 +324,7 @@ export default function StatsScreen({ navigation }) {
             <Text style={[styles.sectionTitle, { fontFamily: TYPOGRAPHY?.bold || 'System' }]}>
               🏆 High Scores
             </Text>
-            <View style={styles.statsGrid}>
+            <View style={styles.statsGrid} pointerEvents="box-none">
               <StatCard
                 icon="⚡"
                 label="Classic Mode"
@@ -307,6 +332,7 @@ export default function StatsScreen({ navigation }) {
                 color="#4ECDC4"
                 subtitle={`${stats.gamesPlayedClassic} Games`}
               />
+              {/* 🔴 BUG #4 FIX: Remove TouchableOpacity wrapper - stats should be read-only */}
               <StatCard
                 icon="💥"
                 label="Rush Mode"
